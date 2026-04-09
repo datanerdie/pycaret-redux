@@ -292,33 +292,39 @@ def five_by_two_cv_f_test(
     -------
     dict with test results.
     """
+    import pandas as pd
     from sklearn.base import clone
     from sklearn.model_selection import StratifiedShuffleSplit
 
-    X = np.asarray(X)
-    y = np.asarray(y)
+    # Keep as DataFrame/Series if provided (for pipeline compatibility)
+    use_iloc = isinstance(X, pd.DataFrame)
+    y_arr = np.asarray(y)  # for split stratification only
 
     diffs = np.zeros((5, 2))
     variances = np.zeros(5)
 
     for i in range(5):
         splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=seed + i)
-        for fold_idx, (idx1, idx2) in enumerate(splitter.split(X, y)):
-            X1, X2 = X[idx1], X[idx2]
-            y1, y2 = y[idx1], y[idx2]
+        for fold_idx, (idx1, idx2) in enumerate(splitter.split(X, y_arr)):
+            if use_iloc:
+                X1, X2 = X.iloc[idx1], X.iloc[idx2]
+                y1, y2 = y.iloc[idx1], y.iloc[idx2]
+            else:
+                X1, X2 = X[idx1], X[idx2]
+                y1, y2 = y[idx1], y[idx2]
 
             # Train A on set1, test on set2
             a1 = clone(estimator_a).fit(X1, y1)
             b1 = clone(estimator_b).fit(X1, y1)
-            score_a1 = float(np.mean(a1.predict(X2) == y2))
-            score_b1 = float(np.mean(b1.predict(X2) == y2))
+            score_a1 = float(np.mean(np.asarray(a1.predict(X2)) == np.asarray(y2)))
+            score_b1 = float(np.mean(np.asarray(b1.predict(X2)) == np.asarray(y2)))
             diffs[i, 0] = score_a1 - score_b1
 
             # Train A on set2, test on set1
             a2 = clone(estimator_a).fit(X2, y2)
             b2 = clone(estimator_b).fit(X2, y2)
-            score_a2 = float(np.mean(a2.predict(X1) == y1))
-            score_b2 = float(np.mean(b2.predict(X1) == y1))
+            score_a2 = float(np.mean(np.asarray(a2.predict(X1)) == np.asarray(y1)))
+            score_b2 = float(np.mean(np.asarray(b2.predict(X1)) == np.asarray(y1)))
             diffs[i, 1] = score_a2 - score_b2
 
         variances[i] = np.var([diffs[i, 0], diffs[i, 1]], ddof=0)

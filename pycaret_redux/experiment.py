@@ -2047,7 +2047,7 @@ class ClassificationExperiment:
         X = self._config.X_train
         y = self._config.y_train
 
-        result = five_by_two_cv_f_test(pipe_a, pipe_b, X.values, y.values, seed=self._config.seed)
+        result = five_by_two_cv_f_test(pipe_a, pipe_b, X, y, seed=self._config.seed)
         # Fix model names to use original estimator names
         result["model_a"] = type(model_a).__name__
         result["model_b"] = type(model_b).__name__
