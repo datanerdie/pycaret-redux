@@ -81,13 +81,31 @@ def run_cross_validation(
         except Exception:
             pass
 
-    # Handle imbalance resampling per fold
+    # Handle imbalance
     X_train = config.X_train
     y_train = config.y_train
+    use_resampling = False
+
+    if config.setup_config and config.setup_config.fix_imbalance:
+        method = config.setup_config.fix_imbalance_method
+        if isinstance(method, str) and method.lower() == "class_weight":
+            # Set class_weight='balanced' on the estimator if it supports it
+            est = pipeline.named_steps.get("estimator", estimator)
+            if hasattr(est, "class_weight"):
+                est.set_params(class_weight="balanced")
+                logger.info("Set class_weight='balanced' on %s", type(est).__name__)
+            else:
+                logger.warning(
+                    "%s does not support class_weight. Falling back to SMOTE.",
+                    type(est).__name__,
+                )
+                use_resampling = True
+        else:
+            use_resampling = True
 
     start_time = time.time()
 
-    if config.setup_config and config.setup_config.fix_imbalance:
+    if use_resampling:
         logger.info("Using manual CV loop with per-fold imbalance resampling")
         # Manual CV loop with per-fold resampling
         fold_results = _cv_with_resampling(
@@ -221,23 +239,151 @@ def _aggregate_scores(
                 )
         rows.append(row)
 
-    # Add mean and std rows
+    # Add mean, std, and confidence interval rows
     mean_row: dict[str, Any] = {"Fold": "Mean"}
     std_row: dict[str, Any] = {"Fold": "SD"}
+    ci_row: dict[str, Any] = {"Fold": "95% CI"}
     mean_scores: dict[str, float] = {}
 
     for metric_id in active_metrics:
         key = f"test_{metric_id}"
         if key in fold_results:
+            scores = fold_results[key]
             display = active_metrics[metric_id].display_name
-            mean_val = round(float(np.mean(fold_results[key])), round_to)
-            std_val = round(float(np.std(fold_results[key])), round_to)
+            mean_val = round(float(np.mean(scores)), round_to)
+            std_val = round(float(np.std(scores)), round_to)
+
+            # 95% confidence interval (t-distribution)
+            from scipy import stats as scipy_stats
+
+            n = len(scores)
+            se = std_val / np.sqrt(n) if n > 1 else 0
+            t_crit = scipy_stats.t.ppf(0.975, df=max(n - 1, 1))
+            ci_lower = round(mean_val - t_crit * se, round_to)
+            ci_upper = round(mean_val + t_crit * se, round_to)
+
             mean_row[display] = mean_val
             std_row[display] = std_val
+            ci_row[display] = f"[{ci_lower}, {ci_upper}]"
             mean_scores[metric_id] = mean_val
 
     rows.append(mean_row)
     rows.append(std_row)
+    rows.append(ci_row)
 
     fold_scores = pd.DataFrame(rows).set_index("Fold")
+    return fold_scores, mean_scores
+
+
+def run_nested_cross_validation(
+    estimator: Any,
+    config: ExperimentConfig,
+    metric_registry: MetricRegistry,
+    param_grid: dict[str, list] | None = None,
+    outer_cv: Any | None = None,
+    inner_cv: int = 5,
+    n_iter: int = 10,
+    optimize: str = "acc",
+    round_to: int = 4,
+    n_jobs: int | None = None,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Run nested cross-validation for unbiased model evaluation.
+
+    Outer loop estimates generalization performance. Inner loop performs
+    hyperparameter tuning. This prevents optimistic bias from using the
+    same data for tuning and evaluation.
+
+    Parameters
+    ----------
+    estimator : estimator
+        The model to evaluate.
+    config : ExperimentConfig
+        Experiment config.
+    metric_registry : MetricRegistry
+        Metrics to evaluate.
+    param_grid : dict, optional
+        Hyperparameter search space for inner loop.
+    outer_cv : CV splitter, optional
+        Outer CV splitter. Defaults to config fold_generator.
+    inner_cv : int
+        Number of inner CV folds.
+    n_iter : int
+        Number of random search iterations in inner loop.
+    optimize : str
+        Metric ID to optimize in inner loop.
+    round_to : int
+        Decimal places.
+    n_jobs : int, optional
+        Parallelism.
+
+    Returns
+    -------
+    (outer_fold_scores_df, mean_scores)
+    """
+    from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+
+    from pycaret_redux.metrics.scoring import build_sklearn_scorer
+
+    outer = outer_cv if outer_cv is not None else config.fold_generator
+    if n_jobs is None:
+        n_jobs = config.setup_config.n_jobs if config.setup_config else -1
+
+    # Build scorers
+    has_proba = hasattr(estimator, "predict_proba")
+    scoring = {}
+    for metric_id, entry in metric_registry.get_active().items():
+        if entry.needs_proba and not has_proba:
+            continue
+        try:
+            scoring[metric_id] = build_sklearn_scorer(entry)
+        except Exception:
+            pass
+
+    # Inner CV scorer
+    optimize_entry = metric_registry.get(optimize)
+    inner_scorer = build_sklearn_scorer(optimize_entry)
+    inner_splitter = StratifiedKFold(n_splits=inner_cv, shuffle=True, random_state=config.seed)
+
+    pipeline = _build_full_pipeline(config.pipeline, estimator)
+
+    # Prefix params for pipeline
+    prefixed_grid = {}
+    if param_grid:
+        prefixed_grid = {f"estimator__{k}": v for k, v in param_grid.items()}
+
+    X_train = config.X_train
+    y_train = config.y_train
+
+    outer_results: dict[str, list] = {f"test_{k}": [] for k in scoring}
+
+    logger.info("Starting nested CV: outer=%s, inner=%d folds", type(outer).__name__, inner_cv)
+
+    for fold_idx, (train_idx, test_idx) in enumerate(outer.split(X_train, y_train)):
+        X_tr, X_te = X_train.iloc[train_idx], X_train.iloc[test_idx]
+        y_tr, y_te = y_train.iloc[train_idx], y_train.iloc[test_idx]
+
+        if prefixed_grid:
+            inner_search = RandomizedSearchCV(
+                clone(pipeline),
+                param_distributions=prefixed_grid,
+                n_iter=min(n_iter, 100),
+                scoring=inner_scorer,
+                cv=inner_splitter,
+                random_state=config.seed,
+                n_jobs=n_jobs,
+                refit=True,
+                error_score=0.0,
+            )
+            inner_search.fit(X_tr, y_tr)
+            best_pipeline = inner_search.best_estimator_
+        else:
+            best_pipeline = clone(pipeline)
+            best_pipeline.fit(X_tr, y_tr)
+
+        for metric_id, scorer in scoring.items():
+            score = scorer(best_pipeline, X_te, y_te)
+            outer_results[f"test_{metric_id}"].append(score)
+
+    fold_results = {k: np.array(v) for k, v in outer_results.items()}
+    fold_scores, mean_scores = _aggregate_scores(fold_results, metric_registry, round_to, False)
     return fold_scores, mean_scores

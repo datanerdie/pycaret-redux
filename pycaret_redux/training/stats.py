@@ -57,8 +57,6 @@ def compare_model_stats(
     elif test == "wilcoxon":
         # Wilcoxon needs non-zero differences
         if np.allclose(a, b):
-            statistic, p_value = 0.0, 1.0
-        else:
             statistic, p_value = stats.wilcoxon(a, b)
         test_name = "Wilcoxon signed-rank test"
     else:
@@ -82,5 +80,96 @@ def compare_model_stats(
         "model_a_mean": round(mean_a, 4),
         "model_b_mean": round(mean_b, 4),
         "difference": round(diff, 4),
+        "conclusion": conclusion,
+    }
+
+
+def mcnemar_test(
+    y_true: np.ndarray,
+    preds_a: np.ndarray,
+    preds_b: np.ndarray,
+    model_a_name: str = "Model A",
+    model_b_name: str = "Model B",
+    alpha: float = 0.05,
+    correction: bool = True,
+) -> dict[str, Any]:
+    """McNemar's test for comparing two classifiers.
+
+    Uses the 2x2 contingency table of disagreements between two models.
+    More appropriate than fold-based tests when comparing classifiers
+    on the same dataset (Raschka 2018, arXiv:1811.12808).
+
+    Parameters
+    ----------
+    y_true : array-like
+        True labels.
+    preds_a : array-like
+        Predictions from model A.
+    preds_b : array-like
+        Predictions from model B.
+    model_a_name : str
+        Display name for model A.
+    model_b_name : str
+        Display name for model B.
+    alpha : float
+        Significance level.
+    correction : bool
+        Apply Edwards continuity correction.
+
+    Returns
+    -------
+    dict with test results.
+    """
+    y_true = np.asarray(y_true)
+    preds_a = np.asarray(preds_a)
+    preds_b = np.asarray(preds_b)
+
+    # Build disagreement table
+    correct_a = preds_a == y_true
+    correct_b = preds_b == y_true
+
+    # b: A correct, B wrong | c: A wrong, B correct
+    b = np.sum(correct_a & ~correct_b)
+    c = np.sum(~correct_a & correct_b)
+
+    if b + c == 0:
+        return {
+            "test": "McNemar's test",
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "alpha": alpha,
+            "significant": False,
+            "model_a": model_a_name,
+            "model_b": model_b_name,
+            "b_count": int(b),
+            "c_count": int(c),
+            "conclusion": "Models make identical errors — no difference.",
+        }
+
+    # Chi-squared statistic (with optional continuity correction)
+    if correction:
+        chi2 = (abs(b - c) - 1) ** 2 / (b + c)
+    else:
+        chi2 = (b - c) ** 2 / (b + c)
+
+    p_value = float(1 - stats.chi2.cdf(chi2, df=1))
+    significant = p_value < alpha
+
+    if significant:
+        better = model_a_name if b > c else model_b_name
+        conclusion = f"{better} is significantly better (p={p_value:.4f})"
+    else:
+        conclusion = f"No significant difference (p={p_value:.4f})"
+
+    return {
+        "test": "McNemar's test",
+        "statistic": round(float(chi2), 4),
+        "p_value": round(p_value, 4),
+        "alpha": alpha,
+        "significant": significant,
+        "model_a": model_a_name,
+        "model_b": model_b_name,
+        "b_count": int(b),
+        "c_count": int(c),
         "conclusion": conclusion,
     }

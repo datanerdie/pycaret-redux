@@ -91,9 +91,28 @@ def tune_model(
     # Prefix params with "estimator__" for pipeline
     prefixed_grid = {f"estimator__{k}": v for k, v in param_grid.items()}
 
+    n_jobs_val = config.setup_config.n_jobs if config.setup_config else -1
+
     if search_library == "optuna":
         tuned_pipeline = _tune_with_optuna(
             pipeline, prefixed_grid, config, cv, scorer, n_iter, optimize_id, verbose
+        )
+    elif search_library == "halving":
+        from sklearn.experimental import enable_halving_search_cv  # noqa: F401
+        from sklearn.model_selection import HalvingRandomSearchCV
+
+        logger.info("Using HalvingRandomSearchCV (successive halving)")
+        search = HalvingRandomSearchCV(
+            estimator=pipeline,
+            param_distributions=prefixed_grid,
+            factor=3,
+            scoring=scorer,
+            cv=cv,
+            random_state=config.seed,
+            n_jobs=n_jobs_val,
+            refit=True,
+            error_score=0.0,
+            aggressive_elimination=True,
         )
     else:
         search = RandomizedSearchCV(
@@ -103,10 +122,12 @@ def tune_model(
             scoring=scorer,
             cv=cv,
             random_state=config.seed,
-            n_jobs=config.setup_config.n_jobs if config.setup_config else -1,
+            n_jobs=n_jobs_val,
             refit=True,
             error_score=0.0,
         )
+
+    if search_library in ("sklearn", "halving"):
         search.fit(config.X_train, config.y_train)
         tuned_pipeline = search.best_estimator_
 

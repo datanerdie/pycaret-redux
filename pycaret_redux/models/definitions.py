@@ -24,6 +24,7 @@ def get_default_classifiers(seed: int, n_jobs: int | None = -1) -> list[ModelEnt
         BaggingClassifier,
         ExtraTreesClassifier,
         GradientBoostingClassifier,
+        HistGradientBoostingClassifier,
         RandomForestClassifier,
     )
     from sklearn.gaussian_process import GaussianProcessClassifier
@@ -288,6 +289,24 @@ def get_default_classifiers(seed: int, n_jobs: int | None = -1) -> list[ModelEnt
                 },
             ),
             shap_type="type1",
+        ),
+        # Histogram-based Gradient Boosting (sklearn's LightGBM equivalent)
+        ModelEntry(
+            id="hgbc",
+            name="Hist Gradient Boosting",
+            class_def=HistGradientBoostingClassifier,
+            default_args={"random_state": seed, "max_iter": 100},
+            tuning=TuningSpace(
+                grid={
+                    "max_iter": [50, 100, 200, 300],
+                    "learning_rate": [0.01, 0.05, 0.1, 0.2],
+                    "max_depth": [3, 5, 7, 10, None],
+                    "max_leaf_nodes": [15, 31, 63, 127],
+                    "min_samples_leaf": [5, 10, 20, 50],
+                    "l2_regularization": [0, 0.01, 0.1, 1.0],
+                },
+            ),
+            shap_type="type2",
         ),
         # Dummy
         ModelEntry(

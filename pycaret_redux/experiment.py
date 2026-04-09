@@ -1499,6 +1499,93 @@ class ClassificationExperiment:
         self._metric_registry.remove(name_or_id)
 
     # ------------------------------------------------------------------
+    # Nested cross-validation
+    # ------------------------------------------------------------------
+
+    def nested_cv(
+        self,
+        estimator: str | Any,
+        param_grid: dict[str, list] | None = None,
+        outer_fold: int | Any | None = None,
+        inner_fold: int = 5,
+        n_iter: int = 10,
+        optimize: str = "acc",
+        round: int = 4,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Run nested cross-validation for unbiased model evaluation.
+
+        Uses an inner CV loop for hyperparameter tuning and an outer CV
+        loop for performance estimation. This prevents optimistic bias
+        from using the same data for both tuning and evaluation.
+
+        Based on: Raschka (2018), arXiv:1811.12808.
+
+        Parameters
+        ----------
+        estimator : str or estimator
+            Model ID or sklearn-compatible estimator.
+        param_grid : dict, optional
+            Hyperparameter search space. If None, uses the model's default
+            tuning grid from the registry.
+        outer_fold : int or CV splitter, optional
+            Outer CV splitter. Defaults to experiment fold_generator.
+        inner_fold : int
+            Number of inner CV folds for tuning.
+        n_iter : int
+            Number of random search iterations in inner loop.
+        optimize : str
+            Metric ID to optimize in inner loop.
+        round : int
+            Decimal places.
+        verbose : bool
+            Print results.
+
+        Returns
+        -------
+        pd.DataFrame
+            Outer fold scores with Mean, SD, and 95% CI.
+
+        Examples
+        --------
+        >>> scores = exp.nested_cv("rf", n_iter=20)
+        >>> scores = exp.nested_cv("lr", param_grid={"C": [0.01, 0.1, 1, 10]})
+        """
+        self._check_setup()
+        from pycaret_redux.models.factory import create_estimator
+        from pycaret_redux.training.cross_validation import run_nested_cross_validation
+
+        model = create_estimator(estimator, self._model_registry)
+
+        # Resolve param_grid from registry if not provided
+        if param_grid is None and isinstance(estimator, str):
+            entry = self._model_registry.get(estimator)
+            param_grid = entry.tuning.grid if entry.tuning.grid else None
+
+        outer = outer_fold if outer_fold is not None else self._config.fold_generator
+
+        fold_scores, mean_scores = run_nested_cross_validation(
+            estimator=model,
+            config=self._config,
+            metric_registry=self._metric_registry,
+            param_grid=param_grid,
+            outer_cv=outer,
+            inner_cv=inner_fold,
+            n_iter=n_iter,
+            optimize=optimize,
+            round_to=round,
+        )
+
+        self._last_pull = fold_scores
+
+        if verbose:
+            from pycaret_redux.utils.display import display_fold_scores
+
+            display_fold_scores(fold_scores, f"Nested CV — {type(model).__name__}")
+
+        return fold_scores
+
+    # ------------------------------------------------------------------
     # Data drift
     # ------------------------------------------------------------------
 
@@ -1576,9 +1663,10 @@ class ClassificationExperiment:
         metric : str
             Metric to compare on. Default "Accuracy".
         test : str
-            "wilcoxon" (non-parametric) or "ttest" (paired t-test).
+            "wilcoxon" (non-parametric), "ttest" (paired t-test), or
+            "mcnemar" (McNemar's test on prediction disagreements).
         fold : int or CV splitter, optional
-            Override fold configuration.
+            Override fold configuration. Not used for McNemar's test.
         verbose : bool
             Print the result.
 
@@ -1586,59 +1674,81 @@ class ClassificationExperiment:
         -------
         dict
             Dictionary with keys ``test``, ``model_a``, ``model_b``,
-            ``model_a_mean``, ``model_b_mean``, ``p_value``,
-            ``significant``, and ``conclusion``.
+            ``p_value``, ``significant``, and ``conclusion``.
 
         Examples
         --------
-        >>> result = exp.compare_model_stats(lr, rf, metric="AUC")
-        >>> result["p_value"]
-        0.032
+        >>> result = exp.compare_model_stats(lr, rf, test="mcnemar")
+        >>> result = exp.compare_model_stats(lr, rf, metric="AUC", test="wilcoxon")
         """
         self._check_setup()
-        from pycaret_redux.training.cross_validation import run_cross_validation
-        from pycaret_redux.training.stats import compare_model_stats as _compare_stats
 
-        # Run CV for both models
-        _, scores_a, means_a, _ = run_cross_validation(
-            estimator=model_a,
-            config=self._config,
-            metric_registry=self._metric_registry,
-            fold=fold,
-        )
-        _, scores_b, means_b, _ = run_cross_validation(
-            estimator=model_b,
-            config=self._config,
-            metric_registry=self._metric_registry,
-            fold=fold,
-        )
+        if test == "mcnemar":
+            from pycaret_redux.training.stats import mcnemar_test
 
-        # Resolve metric to display name
-        metric_entry = self._metric_registry.get(metric)
-        if metric_entry is None:
-            # Try by name
-            for e in self._metric_registry._metrics.values():
-                if e.name.lower() == metric.lower() or e.display_name.lower() == metric.lower():
-                    metric_entry = e
-                    break
-        display_col = metric_entry.display_name
+            X_test = self._config.X_test
+            y_test = self._config.y_test
+            if self._config.pipeline is not None:
+                X_test = self._config.pipeline.transform(X_test)
 
-        # Extract per-fold scores from the DataFrame
-        fold_scores_a = scores_a[display_col].iloc[:-2].values  # exclude Mean/SD
-        fold_scores_b = scores_b[display_col].iloc[:-2].values
+            preds_a = model_a.predict(X_test)
+            preds_b = model_b.predict(X_test)
 
-        result = _compare_stats(
-            model_a_scores=fold_scores_a,
-            model_b_scores=fold_scores_b,
-            model_a_name=type(model_a).__name__,
-            model_b_name=type(model_b).__name__,
-            test=test,
-        )
+            result = mcnemar_test(
+                y_true=y_test.values,
+                preds_a=preds_a,
+                preds_b=preds_b,
+                model_a_name=type(model_a).__name__,
+                model_b_name=type(model_b).__name__,
+            )
+        else:
+            from pycaret_redux.training.cross_validation import run_cross_validation
+            from pycaret_redux.training.stats import compare_model_stats as _compare_stats
+
+            _, scores_a, means_a, _ = run_cross_validation(
+                estimator=model_a,
+                config=self._config,
+                metric_registry=self._metric_registry,
+                fold=fold,
+            )
+            _, scores_b, means_b, _ = run_cross_validation(
+                estimator=model_b,
+                config=self._config,
+                metric_registry=self._metric_registry,
+                fold=fold,
+            )
+
+            metric_entry = self._metric_registry.get(metric)
+            if metric_entry is None:
+                for e in self._metric_registry._metrics.values():
+                    if (
+                        e.name.lower() == metric.lower()
+                        or e.display_name.lower() == metric.lower()
+                    ):
+                        metric_entry = e
+                        break
+            display_col = metric_entry.display_name
+
+            # Exclude Mean/SD/CI rows, convert to float
+            fold_scores_a = scores_a[display_col].iloc[:-3].values.astype(float)
+            fold_scores_b = scores_b[display_col].iloc[:-3].values.astype(float)
+
+            result = _compare_stats(
+                model_a_scores=fold_scores_a,
+                model_b_scores=fold_scores_b,
+                model_a_name=type(model_a).__name__,
+                model_b_name=type(model_b).__name__,
+                test=test,
+            )
 
         if verbose:
             print(f"\nStatistical Model Comparison ({result['test']})")
-            print(f"  {result['model_a']:30s} mean {display_col}: {result['model_a_mean']}")
-            print(f"  {result['model_b']:30s} mean {display_col}: {result['model_b_mean']}")
+            if "model_a_mean" in result:
+                print(f"  {result['model_a']:30s} mean: {result['model_a_mean']}")
+                print(f"  {result['model_b']:30s} mean: {result['model_b_mean']}")
+            if "b_count" in result:
+                print(f"  A correct & B wrong: {result['b_count']}")
+                print(f"  A wrong & B correct: {result['c_count']}")
             print(f"  p-value: {result['p_value']}")
             print(f"  Result:  {result['conclusion']}")
 
