@@ -25,8 +25,7 @@ class MLflowLogger:
             import mlflow
         except ImportError:
             raise ImportError(
-                "MLflow is required for experiment tracking. "
-                "Install with: uv add mlflow"
+                "MLflow is required for experiment tracking. Install with: uv add mlflow"
             )
 
         self._mlflow = mlflow

@@ -145,7 +145,7 @@ def _grid_size(grid: dict) -> int:
     """Estimate the total number of parameter combinations."""
     size = 1
     for values in grid.values():
-        if hasattr(values, '__len__'):
+        if hasattr(values, "__len__"):
             size *= len(values)
         else:
             size *= 10  # for distributions
@@ -159,17 +159,14 @@ def _evaluate_model(estimator: Any, config: ExperimentConfig, scorer: Any) -> fl
     return scorer(pipeline, config.X_test, config.y_test)
 
 
-def _tune_with_optuna(
-    pipeline, param_grid, config, cv, scorer, n_iter, optimize_id, verbose
-):
+def _tune_with_optuna(pipeline, param_grid, config, cv, scorer, n_iter, optimize_id, verbose):
     """Tune using Optuna if available."""
     try:
         from optuna.distributions import CategoricalDistribution  # noqa: F401
         from optuna.integration import OptunaSearchCV  # noqa: F401
     except ImportError:
         raise ImportError(
-            "Optuna is required for search_library='optuna'. "
-            "Install with: uv add optuna"
+            "Optuna is required for search_library='optuna'. Install with: uv add optuna"
         )
 
     # Convert grid to optuna distributions

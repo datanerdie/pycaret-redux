@@ -97,9 +97,7 @@ def predict_model(
                     result[f"prediction_score_{i}"] = np.round(probas[:, i], round_to)
             else:
                 # Just include the score for the predicted class
-                result["prediction_score"] = np.round(
-                    np.max(probas, axis=1), round_to
-                )
+                result["prediction_score"] = np.round(np.max(probas, axis=1), round_to)
         except Exception:
             pass
 

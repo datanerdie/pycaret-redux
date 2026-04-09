@@ -265,7 +265,8 @@ class ClassificationExperiment:
             X_train, y_train = X, y
         else:
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y,
+                X,
+                y,
                 train_size=train_size,
                 random_state=seed,
                 shuffle=data_split_shuffle,
@@ -613,10 +614,7 @@ class ClassificationExperiment:
         try:
             import shap
         except ImportError:
-            raise ImportError(
-                "SHAP is required for interpret_model. "
-                "Install with: uv add shap"
-            )
+            raise ImportError("SHAP is required for interpret_model. Install with: uv add shap")
 
         X_test = self._config.X_test
         if self._config.pipeline is not None:
@@ -633,6 +631,7 @@ class ClassificationExperiment:
             raise ValueError(f"Unknown interpret plot: '{plot}'. Use 'summary' or 'bar'.")
 
         import matplotlib.pyplot as plt
+
         return plt.gcf()
 
     def calibrate_model(
@@ -840,9 +839,7 @@ class ClassificationExperiment:
 
     def _check_setup(self) -> None:
         if not self._config.is_setup_done:
-            raise RuntimeError(
-                "Experiment not initialized. Call setup() first."
-            )
+            raise RuntimeError("Experiment not initialized. Call setup() first.")
 
     def _build_fold_generator(
         self,
@@ -855,13 +852,9 @@ class ClassificationExperiment:
         if isinstance(strategy, str):
             match strategy.lower():
                 case "stratifiedkfold":
-                    return StratifiedKFold(
-                        n_splits=n_folds, shuffle=shuffle, random_state=rs
-                    )
+                    return StratifiedKFold(n_splits=n_folds, shuffle=shuffle, random_state=rs)
                 case "kfold":
-                    return KFold(
-                        n_splits=n_folds, shuffle=shuffle, random_state=rs
-                    )
+                    return KFold(n_splits=n_folds, shuffle=shuffle, random_state=rs)
                 case _:
                     raise ValueError(
                         f"Unknown fold_strategy: '{strategy}'. "

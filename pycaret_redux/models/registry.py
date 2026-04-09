@@ -54,8 +54,7 @@ class ModelRegistry:
         """Get a model entry by ID."""
         if model_id not in self._models:
             raise KeyError(
-                f"Model '{model_id}' not found. "
-                f"Available: {', '.join(self._models.keys())}"
+                f"Model '{model_id}' not found. Available: {', '.join(self._models.keys())}"
             )
         return self._models[model_id]
 
@@ -67,11 +66,13 @@ class ModelRegistry:
                 continue
             if turbo_only and not entry.is_turbo:
                 continue
-            rows.append({
-                "ID": entry.id,
-                "Name": entry.name,
-                "Turbo": entry.is_turbo,
-            })
+            rows.append(
+                {
+                    "ID": entry.id,
+                    "Name": entry.name,
+                    "Turbo": entry.is_turbo,
+                }
+            )
         return pd.DataFrame(rows).set_index("ID")
 
     def create_instance(self, id_or_estimator: str | Any, **kwargs) -> Any:

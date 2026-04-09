@@ -21,9 +21,7 @@ def to_dataframe(data: Any) -> pd.DataFrame:
     raise TypeError(f"Unsupported data type: {type(data)}. Expected DataFrame, ndarray, or list.")
 
 
-def validate_target(
-    data: pd.DataFrame, target: int | str | Any
-) -> str:
+def validate_target(data: pd.DataFrame, target: int | str | Any) -> str:
     """Resolve target to a column name and validate it exists."""
     if isinstance(target, (int, np.integer)):
         target = data.columns[target]

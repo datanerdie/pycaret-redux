@@ -84,9 +84,7 @@ class GroupFeatures(BaseEstimator, TransformerMixin):
         return X
 
 
-def build_binning_transformer(
-    columns: list[str], n_bins: int = 5
-) -> KBinsDiscretizer:
+def build_binning_transformer(columns: list[str], n_bins: int = 5) -> KBinsDiscretizer:
     """Build a binning transformer for specified numeric columns."""
     return KBinsDiscretizer(
         n_bins=n_bins,

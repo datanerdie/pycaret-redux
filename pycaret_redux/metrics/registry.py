@@ -62,31 +62,30 @@ class MetricRegistry:
             if entry.name == id_or_name:
                 return entry
         raise KeyError(
-            f"Metric '{id_or_name}' not found. "
-            f"Available: {', '.join(self._metrics.keys())}"
+            f"Metric '{id_or_name}' not found. Available: {', '.join(self._metrics.keys())}"
         )
 
     def get_active(self) -> dict[str, MetricEntry]:
         """Return all active (non-multiclass-filtered) metrics."""
         if not self._is_multiclass:
             return dict(self._metrics)
-        return {
-            k: v for k, v in self._metrics.items() if v.supports_multiclass
-        }
+        return {k: v for k, v in self._metrics.items() if v.supports_multiclass}
 
     def to_dataframe(self) -> pd.DataFrame:
         """Return metrics as a DataFrame."""
         rows = []
         for entry in self._metrics.values():
-            rows.append({
-                "ID": entry.id,
-                "Name": entry.name,
-                "Display Name": entry.display_name,
-                "Greater is Better": entry.greater_is_better,
-                "Needs Proba": entry.needs_proba,
-                "Multiclass": entry.supports_multiclass,
-                "Custom": entry.is_custom,
-            })
+            rows.append(
+                {
+                    "ID": entry.id,
+                    "Name": entry.name,
+                    "Display Name": entry.display_name,
+                    "Greater is Better": entry.greater_is_better,
+                    "Needs Proba": entry.needs_proba,
+                    "Multiclass": entry.supports_multiclass,
+                    "Custom": entry.is_custom,
+                }
+            )
         return pd.DataFrame(rows).set_index("ID")
 
     def __contains__(self, id_or_name: str) -> bool:

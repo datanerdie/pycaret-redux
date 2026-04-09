@@ -27,9 +27,7 @@ def detect_feature_types(
 
     types["Ignore"] = setup_cfg.ignore_features or []
     types["Keep"] = setup_cfg.keep_features or []
-    types["Date"] = setup_cfg.date_features or list(
-        X.select_dtypes(include="datetime").columns
-    )
+    types["Date"] = setup_cfg.date_features or list(X.select_dtypes(include="datetime").columns)
     types["Text"] = setup_cfg.text_features or []
     types["Ordinal"] = list((setup_cfg.ordinal_features or {}).keys())
 

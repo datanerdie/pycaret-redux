@@ -14,7 +14,9 @@ def plot_learning_curve(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figure:
     cv = kwargs.get("cv", 5)
 
     train_sizes, train_scores, val_scores = learning_curve(
-        estimator, X, y,
+        estimator,
+        X,
+        y,
         cv=cv,
         n_jobs=-1,
         train_sizes=np.linspace(0.1, 1.0, 10),
@@ -30,9 +32,7 @@ def plot_learning_curve(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figure:
     ax.fill_between(
         train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1, color="blue"
     )
-    ax.fill_between(
-        train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange"
-    )
+    ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange")
     ax.plot(train_sizes, train_mean, "o-", color="blue", label="Training Score")
     ax.plot(train_sizes, val_mean, "o-", color="orange", label="Validation Score")
     ax.set_xlabel("Training Size")
@@ -63,7 +63,9 @@ def plot_validation_curve(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figur
             raise ValueError("Cannot auto-detect parameter. Pass param_name and param_range.")
 
     train_scores, val_scores = validation_curve(
-        estimator, X, y,
+        estimator,
+        X,
+        y,
         param_name=param_name,
         param_range=param_range,
         cv=kwargs.get("cv", 5),
@@ -80,9 +82,7 @@ def plot_validation_curve(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figur
     ax.fill_between(
         param_range, train_mean - train_std, train_mean + train_std, alpha=0.1, color="blue"
     )
-    ax.fill_between(
-        param_range, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange"
-    )
+    ax.fill_between(param_range, val_mean - val_std, val_mean + val_std, alpha=0.1, color="orange")
     ax.plot(param_range, train_mean, "o-", color="blue", label="Training Score")
     ax.plot(param_range, val_mean, "o-", color="orange", label="Validation Score")
     ax.set_xlabel(param_name)

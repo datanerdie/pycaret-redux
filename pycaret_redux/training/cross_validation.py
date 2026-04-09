@@ -85,9 +85,15 @@ def run_cross_validation(
     if config.setup_config and config.setup_config.fix_imbalance:
         # Manual CV loop with per-fold resampling
         fold_results = _cv_with_resampling(
-            pipeline, X_train, y_train, cv, scoring,
+            pipeline,
+            X_train,
+            y_train,
+            cv,
+            scoring,
             config.setup_config.fix_imbalance_method,
-            config.seed, fit_kwargs, return_train_score,
+            config.seed,
+            fit_kwargs,
+            return_train_score,
         )
     else:
         # Use sklearn cross_validate

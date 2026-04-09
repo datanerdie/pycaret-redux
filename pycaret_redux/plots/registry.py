@@ -32,8 +32,7 @@ class PlotRegistry:
     def get(self, plot_id: str) -> PlotEntry:
         if plot_id not in self._plots:
             raise KeyError(
-                f"Plot '{plot_id}' not found. "
-                f"Available: {', '.join(self._plots.keys())}"
+                f"Plot '{plot_id}' not found. Available: {', '.join(self._plots.keys())}"
             )
         return self._plots[plot_id]
 

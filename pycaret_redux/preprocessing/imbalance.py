@@ -44,8 +44,7 @@ def resample(
             raise ImportError
     except ImportError:
         raise ImportError(
-            "imbalanced-learn is required for fix_imbalance. "
-            "Install with: uv add imbalanced-learn"
+            "imbalanced-learn is required for fix_imbalance. Install with: uv add imbalanced-learn"
         )
 
     from imblearn.combine import SMOTEENN, SMOTETomek
@@ -70,8 +69,7 @@ def resample(
     method_lower = method.lower()
     if method_lower not in samplers:
         raise ValueError(
-            f"Unknown resampling method: '{method}'. "
-            f"Choose from: {', '.join(samplers.keys())}"
+            f"Unknown resampling method: '{method}'. Choose from: {', '.join(samplers.keys())}"
         )
 
     sampler = samplers[method_lower]

@@ -51,11 +51,8 @@ def build_power_transformer(method: str, seed: int = 0) -> BaseEstimator:
         case "yeo-johnson":
             return PowerTransformer(method="yeo-johnson", standardize=False)
         case "quantile":
-            return QuantileTransformer(
-                random_state=seed, output_distribution="normal"
-            )
+            return QuantileTransformer(random_state=seed, output_distribution="normal")
         case _:
             raise ValueError(
-                f"Unknown transformation_method: '{method}'. "
-                "Choose from: yeo-johnson, quantile."
+                f"Unknown transformation_method: '{method}'. Choose from: yeo-johnson, quantile."
             )

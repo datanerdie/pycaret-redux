@@ -164,8 +164,13 @@ def get_default_classifiers(seed: int, n_jobs: int | None = -1) -> list[ModelEnt
                 grid={
                     "alpha": [1e-5, 1e-4, 1e-3, 0.01, 0.1],
                     "hidden_layer_sizes": [
-                        (100,), (50, 50), (100, 50), (50, 100),
-                        (100, 100), (200,), (50,),
+                        (100,),
+                        (50, 50),
+                        (100, 50),
+                        (50, 100),
+                        (100, 100),
+                        (200,),
+                        (50,),
                     ],
                     "activation": ["relu", "tanh", "logistic"],
                     "learning_rate": ["constant", "invscaling", "adaptive"],
@@ -317,86 +322,92 @@ def _get_optional_boosters(seed: int, n_jobs: int | None) -> list[ModelEntry]:
     try:
         from xgboost import XGBClassifier
 
-        entries.append(ModelEntry(
-            id="xgboost",
-            name="Extreme Gradient Boosting",
-            class_def=XGBClassifier,
-            default_args={
-                "random_state": seed,
-                "n_jobs": n_jobs,
-                "verbosity": 0,
-                "use_label_encoder": False,
-            },
-            tuning=TuningSpace(
-                grid={
-                    "n_estimators": [10, 50, 100, 200, 300],
-                    "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
-                    "max_depth": list(range(1, 12)),
-                    "subsample": [0.5, 0.7, 0.8, 0.9, 1.0],
-                    "colsample_bytree": [0.5, 0.7, 0.8, 0.9, 1.0],
-                    "min_child_weight": [1, 2, 5, 10],
-                    "reg_alpha": [0, 0.001, 0.01, 0.1, 1.0],
-                    "reg_lambda": [0, 0.001, 0.01, 0.1, 1.0],
+        entries.append(
+            ModelEntry(
+                id="xgboost",
+                name="Extreme Gradient Boosting",
+                class_def=XGBClassifier,
+                default_args={
+                    "random_state": seed,
+                    "n_jobs": n_jobs,
+                    "verbosity": 0,
+                    "use_label_encoder": False,
                 },
-            ),
-            shap_type="type2",
-        ))
+                tuning=TuningSpace(
+                    grid={
+                        "n_estimators": [10, 50, 100, 200, 300],
+                        "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
+                        "max_depth": list(range(1, 12)),
+                        "subsample": [0.5, 0.7, 0.8, 0.9, 1.0],
+                        "colsample_bytree": [0.5, 0.7, 0.8, 0.9, 1.0],
+                        "min_child_weight": [1, 2, 5, 10],
+                        "reg_alpha": [0, 0.001, 0.01, 0.1, 1.0],
+                        "reg_lambda": [0, 0.001, 0.01, 0.1, 1.0],
+                    },
+                ),
+                shap_type="type2",
+            )
+        )
     except ImportError:
         pass
 
     try:
         from lightgbm import LGBMClassifier
 
-        entries.append(ModelEntry(
-            id="lightgbm",
-            name="Light Gradient Boosting Machine",
-            class_def=LGBMClassifier,
-            default_args={
-                "random_state": seed,
-                "n_jobs": n_jobs,
-                "verbosity": -1,
-            },
-            tuning=TuningSpace(
-                grid={
-                    "n_estimators": [10, 50, 100, 200, 300],
-                    "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
-                    "max_depth": list(range(-1, 12)),
-                    "num_leaves": [10, 20, 31, 50, 100, 150],
-                    "subsample": [0.5, 0.7, 0.8, 0.9, 1.0],
-                    "colsample_bytree": [0.5, 0.7, 0.8, 0.9, 1.0],
-                    "min_child_samples": [5, 10, 20, 50],
-                    "reg_alpha": [0, 0.001, 0.01, 0.1, 1.0],
-                    "reg_lambda": [0, 0.001, 0.01, 0.1, 1.0],
+        entries.append(
+            ModelEntry(
+                id="lightgbm",
+                name="Light Gradient Boosting Machine",
+                class_def=LGBMClassifier,
+                default_args={
+                    "random_state": seed,
+                    "n_jobs": n_jobs,
+                    "verbosity": -1,
                 },
-            ),
-            shap_type="type2",
-        ))
+                tuning=TuningSpace(
+                    grid={
+                        "n_estimators": [10, 50, 100, 200, 300],
+                        "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
+                        "max_depth": list(range(-1, 12)),
+                        "num_leaves": [10, 20, 31, 50, 100, 150],
+                        "subsample": [0.5, 0.7, 0.8, 0.9, 1.0],
+                        "colsample_bytree": [0.5, 0.7, 0.8, 0.9, 1.0],
+                        "min_child_samples": [5, 10, 20, 50],
+                        "reg_alpha": [0, 0.001, 0.01, 0.1, 1.0],
+                        "reg_lambda": [0, 0.001, 0.01, 0.1, 1.0],
+                    },
+                ),
+                shap_type="type2",
+            )
+        )
     except ImportError:
         pass
 
     try:
         from catboost import CatBoostClassifier
 
-        entries.append(ModelEntry(
-            id="catboost",
-            name="CatBoost Classifier",
-            class_def=CatBoostClassifier,
-            default_args={
-                "random_state": seed,
-                "verbose": False,
-                "thread_count": n_jobs if n_jobs and n_jobs > 0 else -1,
-            },
-            tuning=TuningSpace(
-                grid={
-                    "depth": list(range(1, 12)),
-                    "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
-                    "iterations": [100, 200, 300, 500],
-                    "l2_leaf_reg": [1, 3, 5, 7, 9],
+        entries.append(
+            ModelEntry(
+                id="catboost",
+                name="CatBoost Classifier",
+                class_def=CatBoostClassifier,
+                default_args={
+                    "random_state": seed,
+                    "verbose": False,
+                    "thread_count": n_jobs if n_jobs and n_jobs > 0 else -1,
                 },
-            ),
-            is_turbo=False,
-            shap_type="type2",
-        ))
+                tuning=TuningSpace(
+                    grid={
+                        "depth": list(range(1, 12)),
+                        "learning_rate": [0.001, 0.01, 0.05, 0.1, 0.5],
+                        "iterations": [100, 200, 300, 500],
+                        "l2_leaf_reg": [1, 3, 5, 7, 9],
+                    },
+                ),
+                is_turbo=False,
+                shap_type="type2",
+            )
+        )
     except ImportError:
         pass
 

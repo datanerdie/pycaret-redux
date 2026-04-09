@@ -45,18 +45,12 @@ def display_setup_summary(config: Any) -> None:
     container: list[list[Any]] = []
     container.append(["Session id", cfg.seed])
     container.append(["Target", cfg.target_name])
-    container.append(
-        ["Target type", "Multiclass" if cfg.is_multiclass else "Binary"]
-    )
+    container.append(["Target type", "Multiclass" if cfg.is_multiclass else "Binary"])
     n_total = len(cfg.X_train) + len(cfg.X_test)
     n_feat = len(cfg.feature_names_in)
     container.append(["Original data shape", f"({n_total}, {n_feat + 1})"])
-    container.append([
-        "Transformed train set shape", f"({len(cfg.X_train)}, {n_feat})"
-    ])
-    container.append([
-        "Transformed test set shape", f"({len(cfg.X_test)}, {n_feat})"
-    ])
+    container.append(["Transformed train set shape", f"({len(cfg.X_train)}, {n_feat})"])
+    container.append(["Transformed test set shape", f"({len(cfg.X_test)}, {n_feat})"])
 
     # Feature counts by type
     for fx_name in ["Numeric", "Categorical", "Ordinal", "Date", "Text"]:
@@ -69,38 +63,28 @@ def display_setup_summary(config: Any) -> None:
         container.append(["Imputation type", sc.imputation_type or "None"])
         if sc.imputation_type == "simple":
             container.append(["Numeric imputation", sc.numeric_imputation])
-            container.append(
-                ["Categorical imputation", sc.categorical_imputation]
-            )
+            container.append(["Categorical imputation", sc.categorical_imputation])
         if sc.normalize:
             container.append(["Normalize", sc.normalize])
             container.append(["Normalize method", sc.normalize_method])
         if sc.transformation:
             container.append(["Transformation", sc.transformation])
-            container.append(
-                ["Transformation method", sc.transformation_method]
-            )
+            container.append(["Transformation method", sc.transformation_method])
         if sc.pca:
             container.append(["PCA", sc.pca])
             container.append(["PCA method", sc.pca_method])
             container.append(["PCA components", sc.pca_components])
         if sc.feature_selection:
             container.append(["Feature selection", sc.feature_selection])
-            container.append(
-                ["Feature selection method", sc.feature_selection_method]
-            )
+            container.append(["Feature selection method", sc.feature_selection_method])
         if sc.fix_imbalance:
             container.append(["Fix imbalance", sc.fix_imbalance])
-            container.append(
-                ["Fix imbalance method", sc.fix_imbalance_method]
-            )
+            container.append(["Fix imbalance method", sc.fix_imbalance_method])
         if sc.remove_outliers:
             container.append(["Remove outliers", sc.remove_outliers])
             container.append(["Outliers threshold", sc.outliers_threshold])
         if sc.remove_multicollinearity:
-            container.append(
-                ["Remove multicollinearity", sc.remove_multicollinearity]
-            )
+            container.append(["Remove multicollinearity", sc.remove_multicollinearity])
             container.append(
                 [
                     "Multicollinearity threshold",
@@ -111,16 +95,12 @@ def display_setup_summary(config: Any) -> None:
             container.append(["Polynomial features", sc.polynomial_features])
             container.append(["Polynomial degree", sc.polynomial_degree])
         if sc.low_variance_threshold is not None:
-            container.append(
-                ["Low variance threshold", sc.low_variance_threshold]
-            )
+            container.append(["Low variance threshold", sc.low_variance_threshold])
 
     container.append(
         [
             "Fold Generator",
-            cfg.fold_generator.__class__.__name__
-            if cfg.fold_generator
-            else "None",
+            cfg.fold_generator.__class__.__name__ if cfg.fold_generator else "None",
         ]
     )
     container.append(["Fold Number", sc.fold])
@@ -140,12 +120,7 @@ def display_setup_summary(config: Any) -> None:
 
 def _highlight_setup(column: pd.Series) -> list[str]:
     """Highlight True/Yes values with lightgreen background (PyCaret style)."""
-    return [
-        "background-color: lightgreen"
-        if v is True or v == "Yes"
-        else ""
-        for v in column
-    ]
+    return ["background-color: lightgreen" if v is True or v == "Yes" else "" for v in column]
 
 
 # ---------------------------------------------------------------------------
@@ -153,9 +128,7 @@ def _highlight_setup(column: pd.Series) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def display_fold_scores(
-    fold_scores: pd.DataFrame, model_name: str = ""
-) -> None:
+def display_fold_scores(fold_scores: pd.DataFrame, model_name: str = "") -> None:
     """Display CV fold scores with yellow-highlighted Mean row."""
     if _in_notebook():
         styled = _color_df(fold_scores, "yellow", ["Mean"], axis=1)
@@ -176,10 +149,7 @@ def _color_df(
     Replicates PyCaret's color_df utility.
     """
     return df.style.apply(
-        lambda x: [
-            f"background: {color}" if (x.name in names) else ""
-            for _ in x
-        ],
+        lambda x: [f"background: {color}" if (x.name in names) else "" for _ in x],
         axis=axis,
     )
 
@@ -199,9 +169,7 @@ def display_comparison(
         styled = _highlight_comparison(comparison_df)
         styled = styled.format(
             precision=4,
-            subset=[
-                c for c in comparison_df.columns if c != "Model"
-            ],
+            subset=[c for c in comparison_df.columns if c != "Model"],
         )
         styled = styled.hide(axis="index")
         _ipython_display(styled)
@@ -216,16 +184,11 @@ def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     - Lightgrey background on TT (Sec) column
     - Model column bold and left-aligned
     """
-    metric_cols = [
-        c for c in df.columns
-        if c not in ("Model", "TT (Sec)")
-    ]
+    metric_cols = [c for c in df.columns if c not in ("Model", "TT (Sec)")]
 
     def highlight_max(s: pd.Series) -> list[str]:
         is_best = s == s.max()
-        return [
-            "background-color: yellow" if v else "" for v in is_best
-        ]
+        return ["background-color: yellow" if v else "" for v in is_best]
 
     styler = df.style
     if metric_cols:
@@ -251,9 +214,7 @@ def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 # ---------------------------------------------------------------------------
 
 
-def display_evaluation(
-    scores: dict[str, float], metric_names: dict[str, str]
-) -> None:
+def display_evaluation(scores: dict[str, float], metric_names: dict[str, str]) -> None:
     """Display evaluation metrics as a styled DataFrame."""
     rows = []
     for metric_id, score in scores.items():
@@ -263,9 +224,7 @@ def display_evaluation(
     eval_df = pd.DataFrame(rows)
 
     if _in_notebook():
-        styled = eval_df.style.format({"Score": "{:.4f}"}).hide(
-            axis="index"
-        )
+        styled = eval_df.style.format({"Score": "{:.4f}"}).hide(axis="index")
         _ipython_display(styled)
     else:
         print("\nModel Evaluation on Test Set:")

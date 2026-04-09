@@ -141,9 +141,9 @@ def compare_models(
     sort_col = sort_entry.display_name
     if sort_col in comparison_df.columns:
         ascending = not sort_entry.greater_is_better
-        comparison_df = comparison_df.sort_values(
-            sort_col, ascending=ascending
-        ).reset_index(drop=True)
+        comparison_df = comparison_df.sort_values(sort_col, ascending=ascending).reset_index(
+            drop=True
+        )
 
     if verbose:
         from pycaret_redux.utils.display import display_comparison
@@ -178,8 +178,7 @@ def _resolve_sort_metric(sort: str, registry: MetricRegistry) -> str:
         if entry.name.lower() == sort.lower() or entry.display_name.lower() == sort.lower():
             return entry.id
     raise ValueError(
-        f"Unknown sort metric: '{sort}'. "
-        f"Available: {', '.join(registry._metrics.keys())}"
+        f"Unknown sort metric: '{sort}'. Available: {', '.join(registry._metrics.keys())}"
     )
 
 

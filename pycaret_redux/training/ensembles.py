@@ -50,9 +50,7 @@ def blend_models(
         voting = method
 
     # Build named estimators
-    named_estimators = [
-        (f"model_{i}", clone(e)) for i, e in enumerate(estimator_list)
-    ]
+    named_estimators = [(f"model_{i}", clone(e)) for i, e in enumerate(estimator_list)]
 
     ensemble = VotingClassifier(
         estimators=named_estimators,
@@ -116,9 +114,7 @@ def stack_models(
     else:
         stack_method = method
 
-    named_estimators = [
-        (f"model_{i}", clone(e)) for i, e in enumerate(estimator_list)
-    ]
+    named_estimators = [(f"model_{i}", clone(e)) for i, e in enumerate(estimator_list)]
 
     stacker = StackingClassifier(
         estimators=named_estimators,

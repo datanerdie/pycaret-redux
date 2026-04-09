@@ -70,10 +70,12 @@ def build_preprocessing_pipeline(
         if setup_cfg.imputation_type == "simple":
             num_steps.append(("imputer", build_numeric_imputer(setup_cfg.numeric_imputation)))
         if setup_cfg.transformation:
-            num_steps.append((
-                "power_transform",
-                build_power_transformer(setup_cfg.transformation_method, config.seed),
-            ))
+            num_steps.append(
+                (
+                    "power_transform",
+                    build_power_transformer(setup_cfg.transformation_method, config.seed),
+                )
+            )
         if setup_cfg.normalize:
             num_steps.append(("normalizer", build_normalizer(setup_cfg.normalize_method)))
         if num_steps:
@@ -85,23 +87,27 @@ def build_preprocessing_pipeline(
     if categorical_cols:
         cat_steps: list[tuple[str, Any]] = []
         if setup_cfg.rare_to_value is not None:
-            cat_steps.append((
-                "rare_grouper",
-                RareCategoryGrouper(
-                    threshold=setup_cfg.rare_to_value,
-                    rare_value=setup_cfg.rare_value,
-                ),
-            ))
+            cat_steps.append(
+                (
+                    "rare_grouper",
+                    RareCategoryGrouper(
+                        threshold=setup_cfg.rare_to_value,
+                        rare_value=setup_cfg.rare_value,
+                    ),
+                )
+            )
         if setup_cfg.imputation_type == "simple":
             cat_imputer = build_categorical_imputer(setup_cfg.categorical_imputation)
             cat_steps.append(("imputer", cat_imputer))
-        cat_steps.append((
-            "encoder",
-            build_categorical_encoder(
-                max_encoding_ohe=setup_cfg.max_encoding_ohe,
-                encoding_method=setup_cfg.encoding_method,
-            ),
-        ))
+        cat_steps.append(
+            (
+                "encoder",
+                build_categorical_encoder(
+                    max_encoding_ohe=setup_cfg.max_encoding_ohe,
+                    encoding_method=setup_cfg.encoding_method,
+                ),
+            )
+        )
         transformers.append(("categorical", Pipeline(cat_steps), categorical_cols))
 
     # Ordinal branch
@@ -115,11 +121,13 @@ def build_preprocessing_pipeline(
 
     # Date branch
     if date_cols:
-        transformers.append((
-            "date",
-            ExtractDateTimeFeatures(setup_cfg.create_date_columns),
-            date_cols,
-        ))
+        transformers.append(
+            (
+                "date",
+                ExtractDateTimeFeatures(setup_cfg.create_date_columns),
+                date_cols,
+            )
+        )
 
     if transformers:
         column_transformer = ColumnTransformer(
@@ -133,28 +141,34 @@ def build_preprocessing_pipeline(
 
     # Group features
     if setup_cfg.group_features:
-        steps.append((
-            "group_features",
-            GroupFeatures(setup_cfg.group_features, drop=setup_cfg.drop_groups),
-        ))
+        steps.append(
+            (
+                "group_features",
+                GroupFeatures(setup_cfg.group_features, drop=setup_cfg.drop_groups),
+            )
+        )
 
     # Polynomial features
     if setup_cfg.polynomial_features:
-        steps.append((
-            "polynomial",
-            PolynomialFeatures(
-                degree=setup_cfg.polynomial_degree,
-                interaction_only=False,
-                include_bias=False,
-            ),
-        ))
+        steps.append(
+            (
+                "polynomial",
+                PolynomialFeatures(
+                    degree=setup_cfg.polynomial_degree,
+                    interaction_only=False,
+                    include_bias=False,
+                ),
+            )
+        )
 
     # Low variance removal
     if setup_cfg.low_variance_threshold is not None:
-        steps.append((
-            "low_variance",
-            VarianceThreshold(threshold=setup_cfg.low_variance_threshold),
-        ))
+        steps.append(
+            (
+                "low_variance",
+                VarianceThreshold(threshold=setup_cfg.low_variance_threshold),
+            )
+        )
 
     # PCA / dimensionality reduction
     if setup_cfg.pca:
