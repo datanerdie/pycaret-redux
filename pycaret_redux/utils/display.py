@@ -213,9 +213,13 @@ def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     """Apply PyCaret-style highlighting to comparison DataFrame.
 
     - Yellow background on best (max) value per metric column
-    - Model column left-aligned
+    - Lightgrey background on TT (Sec) column
+    - Model column bold and left-aligned
     """
-    metric_cols = [c for c in df.columns if c != "Model"]
+    metric_cols = [
+        c for c in df.columns
+        if c not in ("Model", "TT (Sec)")
+    ]
 
     def highlight_max(s: pd.Series) -> list[str]:
         is_best = s == s.max()
@@ -226,6 +230,13 @@ def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styler = df.style
     if metric_cols:
         styler = styler.apply(highlight_max, subset=metric_cols)
+
+    # Lightgrey on TT (Sec) column
+    if "TT (Sec)" in df.columns:
+        styler = styler.map(
+            lambda _: "background-color: lightgrey",
+            subset=["TT (Sec)"],
+        )
 
     # Bold the model column
     styler = styler.map(

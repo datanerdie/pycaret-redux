@@ -25,7 +25,7 @@ def create_model(
     return_train_score: bool = False,
     verbose: bool = True,
     **kwargs,
-) -> tuple[Any, pd.DataFrame | None, dict[str, float]]:
+) -> tuple[Any, pd.DataFrame | None, dict[str, float], float]:
     """Train a single model, optionally with cross-validation.
 
     Parameters
@@ -55,7 +55,7 @@ def create_model(
 
     Returns
     -------
-    (fitted_model, fold_scores_df_or_None, mean_scores)
+    (fitted_model, fold_scores_df_or_None, mean_scores, fit_time_seconds)
     """
     # Create fresh estimator
     model = create_estimator(estimator, model_registry, **kwargs)
@@ -77,16 +77,20 @@ def create_model(
             model_name = type(model).__name__
             display_fold_scores(fold_scores, model_name)
 
-        return fitted_model, fold_scores, mean_scores
+        return fitted_model, fold_scores, mean_scores, fit_time
     else:
         # Train without CV
+        import time
+
         from pycaret_redux.training.cross_validation import (
             _build_full_pipeline,
             _extract_estimator,
         )
 
+        start = time.time()
         pipeline = _build_full_pipeline(config.pipeline, model)
         pipeline.fit(config.X_train, config.y_train, **(fit_kwargs or {}))
         fitted_model = _extract_estimator(pipeline)
+        fit_time = round(time.time() - start, 2)
 
-        return fitted_model, None, {}
+        return fitted_model, None, {}, fit_time

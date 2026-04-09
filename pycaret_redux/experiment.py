@@ -400,7 +400,7 @@ class ClassificationExperiment:
         self._check_setup()
         from pycaret_redux.training.creation import create_model as _create
 
-        model, fold_scores, mean_scores = _create(
+        model, fold_scores, mean_scores, fit_time = _create(
             estimator=estimator,
             config=self._config,
             model_registry=self._model_registry,
@@ -761,16 +761,34 @@ class ClassificationExperiment:
         return _finalize(estimator=estimator, config=self._config)
 
     def save_model(self, estimator: Any, model_name: str, verbose: bool = True) -> None:
-        """Save model to disk using joblib."""
+        """Save model + preprocessing pipeline to disk.
+
+        The saved artifact bundles the estimator and the preprocessing
+        pipeline together, so a single file is all you need for deployment.
+        """
         from pycaret_redux.persistence.serialization import save_model as _save
 
-        _save(estimator, model_name, verbose=verbose)
+        _save(
+            estimator,
+            model_name,
+            pipeline=self._config.pipeline,
+            target_name=self._config.target_name,
+            feature_names_in=self._config.feature_names_in,
+            is_multiclass=self._config.is_multiclass,
+            verbose=verbose,
+        )
 
     def load_model(self, model_name: str, verbose: bool = True) -> Any:
-        """Load model from disk."""
+        """Load model from disk.
+
+        Returns the fitted estimator. The preprocessing pipeline is also
+        loaded and can be accessed via the returned ModelArtifact when
+        using ``load_model`` from ``pycaret_redux.persistence``.
+        """
         from pycaret_redux.persistence.serialization import load_model as _load
 
-        return _load(model_name, verbose=verbose)
+        artifact = _load(model_name, verbose=verbose)
+        return artifact.estimator
 
     def models(self, turbo_only: bool = False, **kwargs) -> pd.DataFrame:
         """List available models."""

@@ -168,7 +168,10 @@ def build_preprocessing_pipeline(
     if not steps:
         steps.append(("passthrough", "passthrough"))
 
-    return Pipeline(steps)
+    pipeline = Pipeline(steps)
+    # Output DataFrames (not numpy arrays) to preserve feature names
+    pipeline.set_output(transform="pandas")
+    return pipeline
 
 
 def _build_pca(setup_cfg: SetupConfig) -> PCA | KernelPCA | IncrementalPCA:

@@ -98,7 +98,7 @@ def compare_models(
             progress.set_postfix_str(entry.name)
 
         try:
-            model, fold_scores, mean_scores = create_model(
+            model, fold_scores, mean_scores, fit_time = create_model(
                 estimator=model_id,
                 config=config,
                 model_registry=model_registry,
@@ -115,6 +115,7 @@ def compare_models(
             for metric_id, score in mean_scores.items():
                 me = metric_registry.get(metric_id)
                 row[me.display_name] = score
+            row["TT (Sec)"] = fit_time
             results_rows.append(row)
             fitted_models[model_id] = model
 
