@@ -70,11 +70,12 @@ def run_cross_validation(
     # Build pipeline: preprocessing + estimator
     pipeline = _build_full_pipeline(config.pipeline, estimator)
 
-    # Build scorers (skip proba-based metrics if estimator doesn't support them)
+    # Build scorers (skip proba-based metrics only if model has no probability output)
     has_proba = hasattr(estimator, "predict_proba")
+    has_decision = hasattr(estimator, "decision_function")
     scoring = {}
     for metric_id, entry in metric_registry.get_active().items():
-        if entry.needs_proba and not has_proba:
+        if entry.needs_proba and not has_proba and not has_decision:
             continue
         try:
             scoring[metric_id] = build_sklearn_scorer(entry)
