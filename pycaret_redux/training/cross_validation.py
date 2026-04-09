@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -14,6 +15,8 @@ from sklearn.pipeline import Pipeline
 from pycaret_redux.config import ExperimentConfig
 from pycaret_redux.metrics.registry import MetricRegistry
 from pycaret_redux.metrics.scoring import build_sklearn_scorer
+
+logger = logging.getLogger(__name__)
 
 
 def run_cross_validation(
@@ -55,6 +58,8 @@ def run_cross_validation(
         fit_kwargs = {}
 
     cv = fold if fold is not None else config.fold_generator
+    logger.info("Starting cross-validation for %s", type(estimator).__name__)
+    logger.debug("CV splitter: %s, n_splits=%s", type(cv).__name__, getattr(cv, "n_splits", "?"))
     if n_jobs is not None:
         n_jobs_cv = n_jobs
     elif config.setup_config:
@@ -83,6 +88,7 @@ def run_cross_validation(
     start_time = time.time()
 
     if config.setup_config and config.setup_config.fix_imbalance:
+        logger.info("Using manual CV loop with per-fold imbalance resampling")
         # Manual CV loop with per-fold resampling
         fold_results = _cv_with_resampling(
             pipeline,
@@ -110,6 +116,7 @@ def run_cross_validation(
         )
 
     fit_time = round(time.time() - start_time, 2)
+    logger.info("Cross-validation completed in %.2fs", fit_time)
 
     # Aggregate scores
     fold_scores, mean_scores = _aggregate_scores(
@@ -117,6 +124,7 @@ def run_cross_validation(
     )
 
     # Refit on full training data
+    logger.info("Refitting on full training data")
     final_pipeline = _build_full_pipeline(config.pipeline, clone(estimator))
     final_pipeline.fit(X_train, y_train, **fit_kwargs)
 

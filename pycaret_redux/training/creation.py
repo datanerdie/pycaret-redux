@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -11,6 +12,8 @@ from pycaret_redux.metrics.registry import MetricRegistry
 from pycaret_redux.models.factory import create_estimator
 from pycaret_redux.models.registry import ModelRegistry
 from pycaret_redux.training.cross_validation import run_cross_validation
+
+logger = logging.getLogger(__name__)
 
 
 def create_model(
@@ -59,8 +62,14 @@ def create_model(
     """
     # Create fresh estimator
     model = create_estimator(estimator, model_registry, **kwargs)
+    logger.info("Created estimator: %s", type(model).__name__)
+    logger.debug(
+        "Estimator params: %s",
+        model.get_params() if hasattr(model, "get_params") else "?",
+    )
 
     if cross_validation:
+        logger.info("Training with cross-validation")
         fitted_model, fold_scores, mean_scores, fit_time = run_cross_validation(
             estimator=model,
             config=config,
@@ -79,6 +88,7 @@ def create_model(
 
         return fitted_model, fold_scores, mean_scores, fit_time
     else:
+        logger.info("Training without cross-validation (direct fit)")
         # Train without CV
         import time
 

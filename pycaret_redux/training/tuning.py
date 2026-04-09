@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -13,6 +14,8 @@ from pycaret_redux.metrics.registry import MetricRegistry
 from pycaret_redux.metrics.scoring import build_sklearn_scorer
 from pycaret_redux.models.registry import ModelRegistry
 from pycaret_redux.training.cross_validation import _build_full_pipeline, _extract_estimator
+
+logger = logging.getLogger(__name__)
 
 
 def tune_model(
@@ -59,12 +62,21 @@ def tune_model(
     """
     cv = fold if fold is not None else config.fold_generator
 
+    logger.info(
+        "Starting hyperparameter tuning for %s (n_iter=%d, optimize=%r, library=%r)",
+        type(estimator).__name__,
+        n_iter,
+        optimize,
+        search_library,
+    )
+
     # Resolve tuning grid
     param_grid = custom_grid
     if param_grid is None:
         param_grid = _get_tuning_grid(estimator, model_registry)
 
     if not param_grid:
+        logger.warning("No tuning grid available for %s", type(estimator).__name__)
         if verbose:
             print("No tuning grid available for this model. Returning as-is.")
         return estimator, None
@@ -98,9 +110,12 @@ def tune_model(
         search.fit(config.X_train, config.y_train)
         tuned_pipeline = search.best_estimator_
 
+        best_params = {k.replace("estimator__", ""): v for k, v in search.best_params_.items()}
+        logger.info("Best score (%s): %.4f", optimize, search.best_score_)
+        logger.info("Best params: %s", best_params)
+
         if verbose:
             print(f"Best score ({optimize}): {search.best_score_:.4f}")
-            best_params = {k.replace("estimator__", ""): v for k, v in search.best_params_.items()}
             print(f"Best params: {best_params}")
 
     tuned_model = _extract_estimator(tuned_pipeline)
@@ -109,7 +124,9 @@ def tune_model(
         # Compare with original on the same metric
         original_score = _evaluate_model(estimator, config, scorer)
         tuned_score = _evaluate_model(tuned_model, config, scorer)
+        logger.debug("choose_better: original=%.4f, tuned=%.4f", original_score, tuned_score)
         if original_score >= tuned_score:
+            logger.info("Original model is better or equal; returning original")
             if verbose:
                 print("Original model is better or equal. Returning original.")
             return estimator, None

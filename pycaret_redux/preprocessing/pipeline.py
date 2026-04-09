@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sklearn.compose import ColumnTransformer
@@ -32,6 +33,8 @@ from pycaret_redux.preprocessing.imputation import (
 )
 from pycaret_redux.preprocessing.scaling import build_normalizer, build_power_transformer
 
+logger = logging.getLogger(__name__)
+
 
 def build_preprocessing_pipeline(
     config: ExperimentConfig,
@@ -60,6 +63,14 @@ def build_preprocessing_pipeline(
     categorical_cols = config.feature_types.get("Categorical", [])
     ordinal_cols = config.feature_types.get("Ordinal", [])
     date_cols = config.feature_types.get("Date", [])
+
+    logger.info(
+        "Building preprocessing pipeline: %d numeric, %d categorical, %d ordinal, %d date columns",
+        len(numeric_cols),
+        len(categorical_cols),
+        len(ordinal_cols),
+        len(date_cols),
+    )
 
     # --- Stage 1: Column-parallel preprocessing ---
     transformers: list[tuple[str, Any, list[str]]] = []
@@ -130,6 +141,7 @@ def build_preprocessing_pipeline(
         )
 
     if transformers:
+        logger.debug("ColumnTransformer branches: %s", [t[0] for t in transformers])
         column_transformer = ColumnTransformer(
             transformers=transformers,
             remainder="passthrough",
@@ -150,6 +162,7 @@ def build_preprocessing_pipeline(
 
     # Polynomial features
     if setup_cfg.polynomial_features:
+        logger.info("Adding polynomial features (degree=%d)", setup_cfg.polynomial_degree)
         steps.append(
             (
                 "polynomial",
@@ -172,10 +185,20 @@ def build_preprocessing_pipeline(
 
     # PCA / dimensionality reduction
     if setup_cfg.pca:
+        logger.info(
+            "Adding PCA (method=%s, components=%s)",
+            setup_cfg.pca_method,
+            setup_cfg.pca_components,
+        )
         steps.append(("pca", _build_pca(setup_cfg)))
 
     # Feature selection
     if setup_cfg.feature_selection:
+        logger.info(
+            "Adding feature selection (method=%s, n_features=%s)",
+            setup_cfg.feature_selection_method,
+            setup_cfg.n_features_to_select,
+        )
         steps.append(("feature_selection", _build_feature_selector(setup_cfg, config.seed)))
 
     # If no steps were added, create a minimal passthrough pipeline
@@ -185,6 +208,11 @@ def build_preprocessing_pipeline(
     pipeline = Pipeline(steps)
     # Output DataFrames (not numpy arrays) to preserve feature names
     pipeline.set_output(transform="pandas")
+    logger.info(
+        "Preprocessing pipeline built with %d steps: %s",
+        len(steps),
+        [s[0] for s in steps],
+    )
     return pipeline
 
 

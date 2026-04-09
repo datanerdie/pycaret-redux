@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -11,6 +12,8 @@ from pycaret_redux.config import ExperimentConfig
 from pycaret_redux.metrics.registry import MetricRegistry
 from pycaret_redux.models.registry import ModelRegistry
 from pycaret_redux.training.creation import create_model
+
+logger = logging.getLogger(__name__)
 
 
 def compare_models(
@@ -72,6 +75,8 @@ def compare_models(
     if exclude:
         model_ids = [m for m in model_ids if m not in exclude]
 
+    logger.info("Comparing %d models, sort=%r, errors=%r", len(model_ids), sort, errors)
+
     # Resolve sort metric
     sort_metric_id = _resolve_sort_metric(sort, metric_registry)
 
@@ -118,8 +123,10 @@ def compare_models(
             row["TT (Sec)"] = fit_time
             results_rows.append(row)
             fitted_models[model_id] = model
+            logger.info("Trained %s (id=%s) in %.2fs", entry.name, model_id, fit_time)
 
-        except Exception:
+        except Exception as exc:
+            logger.warning("Model %s failed: %s", model_id, exc)
             if errors == "raise":
                 raise
             continue

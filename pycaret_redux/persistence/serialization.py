@@ -6,12 +6,15 @@ and the fitted estimator, so a single file is all you need for deployment.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import joblib
 from sklearn.pipeline import Pipeline
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,6 +64,8 @@ def save_model(
     if path.suffix != ".joblib":
         path = path.with_suffix(".joblib")
 
+    logger.info("Saving model to %s (includes_pipeline=%s)", path, pipeline is not None)
+
     artifact = ModelArtifact(
         estimator=estimator,
         pipeline=pipeline,
@@ -102,6 +107,7 @@ def load_model(
     if not path.exists():
         raise FileNotFoundError(f"Model file not found: {model_name}")
 
+    logger.info("Loading model from %s", path)
     loaded = joblib.load(path)
 
     # Backward compatibility: if saved before bundling was added

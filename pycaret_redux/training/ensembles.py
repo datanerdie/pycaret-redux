@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sklearn.base import clone
@@ -13,6 +14,8 @@ from pycaret_redux.metrics.registry import MetricRegistry
 from pycaret_redux.training.cross_validation import (
     run_cross_validation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def blend_models(
@@ -48,6 +51,12 @@ def blend_models(
         voting = "soft" if all_proba else "hard"
     else:
         voting = method
+
+    logger.info(
+        "Building VotingClassifier (voting=%s) with %d estimators",
+        voting,
+        len(estimator_list),
+    )
 
     # Build named estimators
     named_estimators = [(f"model_{i}", clone(e)) for i, e in enumerate(estimator_list)]
@@ -106,6 +115,12 @@ def stack_models(
     """
     if meta_model is None:
         meta_model = LogisticRegression(max_iter=1000, random_state=config.seed)
+
+    logger.info(
+        "Building StackingClassifier with %d base estimators, meta_model=%s",
+        len(estimator_list),
+        type(meta_model).__name__,
+    )
 
     # Determine stack method
     if method == "auto":
@@ -166,6 +181,12 @@ def ensemble_model(
     -------
     Fitted BaggingClassifier.
     """
+    logger.info(
+        "Building BaggingClassifier with n_estimators=%d for %s",
+        n_estimators,
+        type(estimator).__name__,
+    )
+
     bagger = BaggingClassifier(
         estimator=clone(estimator),
         n_estimators=n_estimators,

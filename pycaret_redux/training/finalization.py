@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,8 @@ from sklearn.base import clone
 
 from pycaret_redux.config import ExperimentConfig
 from pycaret_redux.training.cross_validation import _build_full_pipeline, _extract_estimator
+
+logger = logging.getLogger(__name__)
 
 
 def finalize_model(
@@ -31,6 +34,12 @@ def finalize_model(
     """
     X_full = pd.concat([config.X_train, config.X_test], ignore_index=True)
     y_full = pd.concat([config.y_train, config.y_test], ignore_index=True)
+
+    logger.info(
+        "Finalizing %s on combined train+test data, shape=%s",
+        type(estimator).__name__,
+        X_full.shape,
+    )
 
     pipeline = _build_full_pipeline(config.pipeline, clone(estimator))
     pipeline.fit(X_full, y_full)
@@ -68,8 +77,10 @@ def predict_model(
     """
     if data is not None:
         X = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data.copy()
+        logger.info("Predicting on custom data, shape=%s", X.shape)
     else:
         X = config.X_test.copy()
+        logger.info("Predicting on test set, shape=%s", X.shape)
 
     # Apply preprocessing
     if config.pipeline is not None:

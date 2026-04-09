@@ -7,7 +7,15 @@ from typing import Any, Self
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
+from sklearn.model_selection import (
+    GroupKFold,
+    KFold,
+    RepeatedKFold,
+    RepeatedStratifiedKFold,
+    StratifiedKFold,
+    TimeSeriesSplit,
+    train_test_split,
+)
 
 from pycaret_redux.config import ExperimentConfig, SetupConfig
 from pycaret_redux.metrics.registry import MetricEntry, MetricRegistry
@@ -38,6 +46,7 @@ class ClassificationExperiment:
         self._config = ExperimentConfig()
         self._model_registry: ModelRegistry | None = None
         self._metric_registry: MetricRegistry | None = None
+        self._last_pull: pd.DataFrame | None = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -140,29 +149,156 @@ class ClassificationExperiment:
         use_gpu: bool = False,
         session_id: int | None = None,
         verbose: bool = True,
+        profile: bool = False,
     ) -> Self:
-        """Initialize the experiment: validate data, preprocess, split train/test.
+        """Initialize the experiment: validate data, preprocess, and split train/test.
+
+        Ingests raw data, detects feature types, builds the preprocessing
+        pipeline, removes outliers if requested, and splits into train/test sets.
 
         Parameters
         ----------
         data : DataFrame-like
-            Training data with features and target column.
-        target : int or str
-            Target column name or index. Default -1 (last column).
-        train_size : float
-            Proportion of data for training. Default 0.7.
-        fold : int
-            Number of cross-validation folds. Default 10.
+            Training data containing features and the target column.
+        target : int or str, default -1
+            Target column name or positional index. Default ``-1`` (last column).
+        index : bool, int, or str, default True
+            How to handle the DataFrame index on ingestion.
+        train_size : float, default 0.7
+            Proportion of data used for training (remainder goes to test).
+        test_data : DataFrame-like, optional
+            Separate test set. When provided, ``train_size`` is ignored.
+        ordinal_features : dict of str to list, optional
+            Mapping of ordinal column names to their ordered categories.
+        numeric_features : list of str, optional
+            Column names to force-treat as numeric.
+        categorical_features : list of str, optional
+            Column names to force-treat as categorical.
+        date_features : list of str, optional
+            Column names to parse as dates and expand.
+        text_features : list of str, optional
+            Column names to vectorize as text.
+        ignore_features : list of str, optional
+            Column names to drop before modelling.
+        keep_features : list of str, optional
+            Column names to pass through without transformation.
+        preprocess : bool, default True
+            Whether to build and fit the preprocessing pipeline.
+        create_date_columns : list of str, optional
+            Date parts to extract, e.g. ``["day", "month", "year"]``.
+        imputation_type : str or None, default "simple"
+            ``"simple"`` for univariate or ``"iterative"`` for multivariate imputation.
+        numeric_imputation : str, default "mean"
+            Strategy for numeric missing values (``"mean"``, ``"median"``, ``"zero"``).
+        categorical_imputation : str, default "mode"
+            Strategy for categorical missing values (``"mode"``, ``"not_available"``).
+        iterative_imputation_iters : int, default 5
+            Rounds for iterative imputation when ``imputation_type="iterative"``.
+        text_features_method : str, default "tf-idf"
+            Vectorization method for text features (``"tf-idf"`` or ``"bow"``).
+        max_encoding_ohe : int, default 25
+            Maximum unique values for one-hot encoding; above this threshold
+            ordinal/target encoding is used instead.
+        encoding_method : object, optional
+            Custom encoder instance from category_encoders.
+        rare_to_value : float or None, optional
+            Frequency threshold below which categories are grouped.
+        rare_value : str, default "rare"
+            Replacement label for rare categories.
+        polynomial_features : bool, default False
+            Whether to create polynomial interaction features.
+        polynomial_degree : int, default 2
+            Degree of polynomial features.
+        low_variance_threshold : float or None, optional
+            Remove features with variance below this threshold.
+        group_features : dict, optional
+            Groups of features to aggregate (e.g. mean, std).
+        drop_groups : bool, default False
+            Drop original features after grouping.
+        remove_multicollinearity : bool, default False
+            Drop features with pairwise correlation above the threshold.
+        multicollinearity_threshold : float, default 0.9
+            Correlation threshold for multicollinearity removal.
+        bin_numeric_features : list of str, optional
+            Numeric columns to discretize into bins.
+        remove_outliers : bool, default False
+            Remove outliers from the training set before modelling.
+        outliers_method : str, default "iforest"
+            Outlier detection method (``"iforest"`` or ``"ee"``).
+        outliers_threshold : float, default 0.05
+            Proportion of data to treat as outliers.
+        fix_imbalance : bool, default False
+            Apply oversampling to balance the target distribution.
+        fix_imbalance_method : str or object, default "SMOTE"
+            Resampling strategy or sampler instance.
+        transformation : bool, default False
+            Apply power transformation to numeric features.
+        transformation_method : str, default "yeo-johnson"
+            Power transform method (``"yeo-johnson"`` or ``"quantile"``).
+        normalize : bool, default False
+            Normalize (scale) numeric features.
+        normalize_method : str, default "zscore"
+            Scaling method (``"zscore"``, ``"minmax"``, ``"maxabs"``, ``"robust"``).
+        pca : bool, default False
+            Apply dimensionality reduction via PCA.
+        pca_method : str, default "linear"
+            PCA variant (``"linear"``, ``"kernel"``, ``"incremental"``).
+        pca_components : int, float, str, or None, optional
+            Number or fraction of components to keep.
+        feature_selection : bool, default False
+            Select a subset of features using an estimator.
+        feature_selection_method : str, default "classic"
+            Feature selection approach (``"classic"`` or ``"boruta"``).
+        feature_selection_estimator : str or object, default "lightgbm"
+            Estimator used for feature importance ranking.
+        n_features_to_select : int or float, default 0.2
+            Number or fraction of features to retain.
+        custom_pipeline : object, optional
+            A scikit-learn transformer or pipeline to inject.
+        custom_pipeline_position : int, default -1
+            Position in the pipeline to insert ``custom_pipeline``.
+        data_split_shuffle : bool, default True
+            Shuffle data before splitting.
+        data_split_stratify : bool or list of str, default True
+            Stratify by target during train/test split.
+        fold_strategy : str or CV splitter, default "stratifiedkfold"
+            Cross-validation strategy. Options include ``"stratifiedkfold"``,
+            ``"kfold"``, ``"groupkfold"``, ``"timeseries"``.
+        fold : int, default 10
+            Number of cross-validation folds.
+        fold_shuffle : bool, default False
+            Shuffle within cross-validation folds.
+        fold_groups : str, DataFrame, or None, optional
+            Column or array defining groups for group-based CV strategies.
+        n_jobs : int or None, default -1
+            Number of parallel jobs (``-1`` uses all processors).
+        use_gpu : bool, default False
+            Use GPU-accelerated estimators where available.
         session_id : int, optional
-            Random seed for reproducibility.
-        verbose : bool
-            Whether to print setup summary.
+            Random seed for reproducibility. If ``None``, a random seed is chosen.
+        verbose : bool, default True
+            Whether to print the setup summary table.
+        profile : bool, default False
+            Whether to run data profiling after setup.
 
         Returns
         -------
         self
-            The experiment instance for method chaining.
+            The experiment instance, enabling method chaining.
+
+        Examples
+        --------
+        >>> exp = ClassificationExperiment()
+        >>> exp.setup(data=df, target="species", session_id=42)
+        >>> exp.is_setup_done
+        True
         """
+        logger.info(
+            "setup() called with data shape=%s, target=%r",
+            getattr(data, "shape", "?"),
+            target,
+        )
+
         if data is None:
             raise ValueError("data parameter is required.")
 
@@ -171,6 +307,7 @@ class ClassificationExperiment:
         # Resolve seed
         seed = session_id if session_id is not None else np.random.randint(0, 10000)
         self._config.seed = seed
+        logger.debug("Random seed set to %d", seed)
 
         # Convert to DataFrame
         df = to_dataframe(data)
@@ -189,6 +326,12 @@ class ClassificationExperiment:
 
         # Detect multiclass
         self._config.is_multiclass = y.nunique() > 2
+        logger.info(
+            "Target '%s' has %d classes (multiclass=%s)",
+            target_name,
+            y.nunique(),
+            self._config.is_multiclass,
+        )
 
         # Store feature names
         self._config.feature_names_in = list(X.columns)
@@ -257,6 +400,12 @@ class ClassificationExperiment:
         self._config.setup_config = setup_cfg
 
         # --- Train/test split ---
+        logger.info(
+            "Splitting data with train_size=%.2f, shuffle=%s, stratify=%s",
+            train_size,
+            data_split_shuffle,
+            data_split_stratify,
+        )
         stratify = y if data_split_stratify is True else None
         if test_data is not None:
             test_df = to_dataframe(test_data)
@@ -283,6 +432,11 @@ class ClassificationExperiment:
 
         # --- Remove outliers (before pipeline, modifies train data) ---
         if remove_outliers:
+            logger.info(
+                "Removing outliers with method=%r, threshold=%.3f",
+                outliers_method,
+                outliers_threshold,
+            )
             remover = OutlierRemover(
                 method=outliers_method,
                 threshold=outliers_threshold,
@@ -308,6 +462,7 @@ class ClassificationExperiment:
 
         # --- Preprocessing pipeline ---
         if preprocess:
+            logger.info("Building and fitting preprocessing pipeline")
             pipeline = build_preprocessing_pipeline(self._config, setup_cfg)
             pipeline.fit(self._config.X_train, self._config.y_train)
             self._config.pipeline = pipeline
@@ -316,6 +471,11 @@ class ClassificationExperiment:
 
         if verbose:
             self._print_setup_summary()
+
+        if profile:
+            from pycaret_redux.utils.profiling import profile_data
+
+            profile_data(self._config.X_train, self._config.y_train, self._config.feature_types)
 
         logger.info("Setup complete. Data shape: train=%s, test=%s", X_train.shape, X_test.shape)
         return self
@@ -341,20 +501,55 @@ class ClassificationExperiment:
     ) -> Any:
         """Compare all available models using cross-validation.
 
+        Trains every registered model (or a subset) with cross-validation
+        and ranks them by the chosen metric.
+
         Parameters
         ----------
-        sort : str
-            Metric to sort by. Default "Accuracy".
-        n_select : int
-            Number of top models to return.
-        turbo : bool
-            Only use fast models.
+        include : list of str or estimator, optional
+            Model IDs or estimator instances to include. If ``None``, all
+            registered models are compared.
+        exclude : list of str, optional
+            Model IDs to exclude from comparison.
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        cross_validation : bool, default True
+            Whether to use cross-validation. If ``False``, trains once and
+            evaluates on the hold-out test set.
+        sort : str, default "Accuracy"
+            Metric name to sort the leaderboard by.
+        n_select : int, default 1
+            Number of top models to return. When greater than 1 a list is returned.
+        budget_time : float, optional
+            Time budget in minutes. Comparison stops after this limit.
+        turbo : bool, default True
+            When ``True``, only fast/lightweight models are included.
+        errors : str, default "ignore"
+            How to handle model-fitting errors (``"ignore"`` or ``"raise"``).
+        fit_kwargs : dict, optional
+            Extra keyword arguments forwarded to each model's ``fit()`` call.
+        verbose : bool, default True
+            Print the comparison leaderboard.
 
         Returns
         -------
-        Best model (or list if n_select > 1).
+        object or list of object
+            Best fitted model, or a list of top models when ``n_select > 1``.
+
+        Examples
+        --------
+        >>> best = exp.compare_models(sort="F1", n_select=3)
+        >>> exp.pull()  # leaderboard DataFrame
         """
         self._check_setup()
+        logger.info(
+            "compare_models() called with sort=%r, n_select=%d, turbo=%s",
+            sort,
+            n_select,
+            turbo,
+        )
         from pycaret_redux.training.comparison import compare_models as _compare
 
         result, self._comparison_df = _compare(
@@ -374,6 +569,7 @@ class ClassificationExperiment:
             fit_kwargs=fit_kwargs,
             verbose=verbose,
         )
+        self._last_pull = self._comparison_df
         return result
 
     def create_model(
@@ -389,16 +585,46 @@ class ClassificationExperiment:
     ) -> Any:
         """Train a single model with cross-validation.
 
+        Fits the specified estimator and evaluates it using k-fold
+        cross-validation. The per-fold scores are stored and can be
+        retrieved via ``pull()``.
+
         Parameters
         ----------
         estimator : str or estimator
-            Model ID (e.g. "lr") or sklearn-compatible estimator.
+            Model ID (e.g. ``"lr"``, ``"rf"``) or an sklearn-compatible
+            estimator instance.
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        cross_validation : bool, default True
+            Whether to evaluate with cross-validation.
+        fit_kwargs : dict, optional
+            Extra keyword arguments forwarded to the model's ``fit()`` call.
+        return_train_score : bool, default False
+            Whether to include training scores in the output.
+        verbose : bool, default True
+            Print the cross-validation results table.
+        **kwargs
+            Additional keyword arguments passed to the estimator constructor.
 
         Returns
         -------
-        Fitted model.
+        object
+            The fitted model estimator.
+
+        Examples
+        --------
+        >>> model = exp.create_model("lr")
+        >>> scores = exp.pull()
         """
         self._check_setup()
+        logger.info(
+            "create_model() called with estimator=%r, cross_validation=%s",
+            estimator,
+            cross_validation,
+        )
         from pycaret_redux.training.creation import create_model as _create
 
         model, fold_scores, mean_scores, fit_time = _create(
@@ -414,6 +640,8 @@ class ClassificationExperiment:
             verbose=verbose,
             **kwargs,
         )
+        if fold_scores is not None:
+            self._last_pull = fold_scores
         return model
 
     def tune_model(
@@ -431,16 +659,50 @@ class ClassificationExperiment:
     ) -> Any:
         """Tune model hyperparameters via random search.
 
+        Searches over a predefined or custom hyperparameter grid and
+        returns the best-performing configuration.
+
         Parameters
         ----------
-        estimator : fitted estimator
-            Model to tune.
-        n_iter : int
-            Number of search iterations.
-        optimize : str
-            Metric to optimize.
+        estimator : object
+            A fitted model returned by ``create_model()`` or ``compare_models()``.
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        n_iter : int, default 10
+            Number of random search iterations.
+        custom_grid : dict of str to list, optional
+            Custom hyperparameter grid. Keys are parameter names, values
+            are lists of candidate values.
+        optimize : str, default "Accuracy"
+            Metric to optimize during the search.
+        choose_better : bool, default True
+            If ``True``, only return the tuned model when it improves on
+            the original; otherwise return the original.
+        search_library : str, default "sklearn"
+            Search backend to use (``"sklearn"``).
+        verbose : bool, default True
+            Print tuning results.
+        **kwargs
+            Additional keyword arguments forwarded to the search algorithm.
+
+        Returns
+        -------
+        object
+            The tuned model estimator.
+
+        Examples
+        --------
+        >>> tuned_lr = exp.tune_model(model, n_iter=50, optimize="AUC")
         """
         self._check_setup()
+        logger.info(
+            "tune_model() called with optimize=%r, n_iter=%d, search_library=%r",
+            optimize,
+            n_iter,
+            search_library,
+        )
         from pycaret_redux.training.tuning import tune_model as _tune
 
         tuned, _ = _tune(
@@ -471,8 +733,47 @@ class ClassificationExperiment:
         choose_better: bool = False,
         verbose: bool = True,
     ) -> Any:
-        """Create a voting ensemble from multiple models."""
+        """Create a voting ensemble from multiple models.
+
+        Combines several fitted models into a ``VotingClassifier`` that
+        aggregates their predictions using soft or hard voting.
+
+        Parameters
+        ----------
+        estimator_list : list of object
+            Fitted model estimators to blend.
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        method : str, default "auto"
+            Voting method: ``"soft"``, ``"hard"``, or ``"auto"`` (soft when
+            all estimators support ``predict_proba``, hard otherwise).
+        weights : list of float, optional
+            Voting weights for each estimator. Equal weights when ``None``.
+        optimize : str, default "Accuracy"
+            Metric used to evaluate the blended model.
+        choose_better : bool, default False
+            If ``True``, return the blend only when it outperforms the best
+            individual model; otherwise return the best individual.
+        verbose : bool, default True
+            Print evaluation results.
+
+        Returns
+        -------
+        object
+            The fitted ``VotingClassifier``.
+
+        Examples
+        --------
+        >>> blended = exp.blend_models([model1, model2, model3])
+        """
         self._check_setup()
+        logger.info(
+            "blend_models() called with %d estimators, method=%r",
+            len(estimator_list),
+            method,
+        )
         from pycaret_redux.training.ensembles import blend_models as _blend
 
         return _blend(
@@ -500,8 +801,47 @@ class ClassificationExperiment:
         choose_better: bool = False,
         verbose: bool = True,
     ) -> Any:
-        """Create a stacking ensemble."""
+        """Create a stacking ensemble from multiple models.
+
+        Trains a meta-learner on top of the base models' out-of-fold
+        predictions using a ``StackingClassifier``.
+
+        Parameters
+        ----------
+        estimator_list : list of object
+            Fitted base-layer model estimators.
+        meta_model : object or None, optional
+            Meta-learner estimator. Defaults to ``LogisticRegression`` when
+            ``None``.
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        method : str, default "auto"
+            Method for generating base-layer predictions (``"auto"``,
+            ``"predict_proba"``, ``"predict"``).
+        restack : bool, default False
+            When ``True``, include original features alongside base-layer
+            predictions in the meta-learner input.
+        optimize : str, default "Accuracy"
+            Metric used to evaluate the stacked model.
+        choose_better : bool, default False
+            If ``True``, return the stack only when it outperforms the best
+            individual model.
+        verbose : bool, default True
+            Print evaluation results.
+
+        Returns
+        -------
+        object
+            The fitted ``StackingClassifier``.
+
+        Examples
+        --------
+        >>> stacked = exp.stack_models([lr, rf, xgb])
+        """
         self._check_setup()
+        logger.info("stack_models() called with %d estimators", len(estimator_list))
         from pycaret_redux.training.ensembles import stack_models as _stack
 
         return _stack(
@@ -529,8 +869,46 @@ class ClassificationExperiment:
         choose_better: bool = False,
         verbose: bool = True,
     ) -> Any:
-        """Create a bagging ensemble."""
+        """Create a bagging or boosting ensemble from a single model.
+
+        Wraps the estimator in a ``BaggingClassifier`` (or boosting
+        variant) that trains multiple copies on bootstrapped samples.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to ensemble.
+        method : str, default "bagging"
+            Ensemble method (``"bagging"`` or ``"boosting"``).
+        fold : int or CV splitter, optional
+            Override the fold configuration set during ``setup()``.
+        round : int, default 4
+            Number of decimal places for metric scores.
+        n_estimators : int, default 10
+            Number of base estimators in the ensemble.
+        optimize : str, default "Accuracy"
+            Metric used to evaluate the ensemble.
+        choose_better : bool, default False
+            If ``True``, return the ensemble only when it outperforms the
+            original model.
+        verbose : bool, default True
+            Print evaluation results.
+
+        Returns
+        -------
+        object
+            The fitted ensemble estimator.
+
+        Examples
+        --------
+        >>> bagged = exp.ensemble_model(model, n_estimators=20)
+        """
         self._check_setup()
+        logger.info(
+            "ensemble_model() called with method=%r, n_estimators=%d",
+            method,
+            n_estimators,
+        )
         from pycaret_redux.training.ensembles import ensemble_model as _ensemble
 
         return _ensemble(
@@ -553,17 +931,35 @@ class ClassificationExperiment:
         save: str | None = None,
         **kwargs,
     ) -> Any:
-        """Generate model diagnostic plots.
+        """Generate a model diagnostic plot.
+
+        Renders a visual evaluation of the model using the hold-out test
+        set. The plot is displayed inline and optionally saved to disk.
 
         Parameters
         ----------
-        estimator : fitted estimator
-            Model to plot.
-        plot : str
-            Plot type: auc, confusion_matrix, threshold, pr, error,
-            class_report, feature, learning, vc, calibration, lift, gain, ks.
-        save : str, optional
-            File path to save the plot.
+        estimator : object
+            Fitted model to visualize.
+        plot : str, default "auc"
+            Plot type. Supported values: ``"auc"``, ``"confusion_matrix"``,
+            ``"threshold"``, ``"pr"``, ``"error"``, ``"class_report"``,
+            ``"feature"``, ``"learning"``, ``"vc"``, ``"calibration"``,
+            ``"lift"``, ``"gain"``, ``"ks"``.
+        save : str or None, optional
+            File path to save the figure. If ``None``, the plot is only
+            displayed.
+        **kwargs
+            Additional keyword arguments forwarded to the plot renderer.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The rendered figure object.
+
+        Examples
+        --------
+        >>> exp.plot_model(model, plot="confusion_matrix")
+        >>> exp.plot_model(model, plot="auc", save="auc_plot.png")
         """
         self._check_setup()
         from pycaret_redux.plots.registry import build_default_registry
@@ -587,7 +983,27 @@ class ClassificationExperiment:
         )
 
     def evaluate_model(self, estimator: Any, **kwargs) -> None:
-        """Print evaluation summary for a model."""
+        """Print an evaluation summary for a model on the test set.
+
+        Computes all registered metrics against the hold-out test data
+        and displays a formatted table of results.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to evaluate.
+        **kwargs
+            Reserved for future use.
+
+        Returns
+        -------
+        None
+            Results are printed to stdout.
+
+        Examples
+        --------
+        >>> exp.evaluate_model(model)
+        """
         self._check_setup()
         from pycaret_redux.metrics.scoring import calculate_metrics
         from pycaret_redux.utils.display import display_evaluation
@@ -609,7 +1025,35 @@ class ClassificationExperiment:
         display_evaluation(scores, metric_names)
 
     def interpret_model(self, estimator: Any, plot: str = "summary", **kwargs) -> Any:
-        """SHAP-based model interpretation."""
+        """Generate SHAP-based model interpretation plots.
+
+        Uses SHAP (SHapley Additive exPlanations) to explain feature
+        contributions to the model's predictions on the test set.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to interpret. Must be compatible with SHAP.
+        plot : str, default "summary"
+            Plot type: ``"summary"`` for a beeswarm summary or ``"bar"``
+            for mean absolute SHAP value bar chart.
+        **kwargs
+            Additional keyword arguments forwarded to the SHAP explainer.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The rendered SHAP figure.
+
+        Raises
+        ------
+        ImportError
+            If the ``shap`` package is not installed.
+
+        Examples
+        --------
+        >>> fig = exp.interpret_model(model, plot="summary")
+        """
         self._check_setup()
         try:
             import shap
@@ -641,14 +1085,32 @@ class ClassificationExperiment:
         fold: int | Any | None = None,
         verbose: bool = True,
     ) -> Any:
-        """Calibrate predicted probabilities.
+        """Calibrate predicted probabilities using Platt scaling or isotonic regression.
+
+        Wraps the estimator in a ``CalibratedClassifierCV`` so that
+        ``predict_proba`` outputs well-calibrated probabilities.
 
         Parameters
         ----------
-        estimator : fitted estimator
-            Model to calibrate.
-        method : str
-            "sigmoid" (Platt) or "isotonic".
+        estimator : object
+            Fitted model whose probabilities should be calibrated.
+        method : str, default "sigmoid"
+            Calibration method: ``"sigmoid"`` (Platt scaling) or
+            ``"isotonic"`` (isotonic regression).
+        fold : int or CV splitter, optional
+            Cross-validation strategy used during calibration. If ``None``,
+            uses the fold generator from ``setup()``.
+        verbose : bool, default True
+            Print a confirmation message after calibration.
+
+        Returns
+        -------
+        CalibratedClassifierCV
+            The calibrated model wrapper.
+
+        Examples
+        --------
+        >>> calibrated = exp.calibrate_model(model, method="isotonic")
         """
         self._check_setup()
         from sklearn.base import clone
@@ -678,11 +1140,37 @@ class ClassificationExperiment:
         optimize: str = "F1",
         verbose: bool = True,
     ) -> tuple[Any, float]:
-        """Find optimal decision threshold for binary classification.
+        """Find the optimal decision threshold for binary classification.
+
+        Sweeps thresholds from 0.01 to 0.99 and selects the one that
+        maximizes the chosen metric on the hold-out test set.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model with a ``predict_proba`` method.
+        optimize : str, default "F1"
+            Metric to maximize. Supported: ``"F1"``, ``"Accuracy"``,
+            ``"Precision"``, ``"Recall"``.
+        verbose : bool, default True
+            Print the optimal threshold and its score.
 
         Returns
         -------
-        (estimator, optimal_threshold)
+        tuple of (object, float)
+            The original estimator and the optimal probability threshold.
+
+        Raises
+        ------
+        ValueError
+            If the experiment is multiclass or the estimator lacks
+            ``predict_proba``.
+
+        Examples
+        --------
+        >>> model, threshold = exp.optimize_threshold(model, optimize="F1")
+        >>> print(threshold)
+        0.42
         """
         self._check_setup()
         if self._config.is_multiclass:
@@ -739,8 +1227,43 @@ class ClassificationExperiment:
         round: int = 4,
         verbose: bool = True,
     ) -> pd.DataFrame:
-        """Make predictions on new or test data."""
+        """Generate predictions on new or hold-out test data.
+
+        When ``data`` is ``None``, predictions are made on the test set
+        created during ``setup()``. Preprocessing is applied automatically.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to generate predictions with.
+        data : DataFrame-like, optional
+            New data to predict on. If ``None``, the hold-out test set is used.
+        probability_threshold : float or None, optional
+            Custom decision threshold for binary classification. Overrides
+            the default 0.5.
+        raw_score : bool, default False
+            When ``True``, include raw predicted probabilities in the output.
+        round : int, default 4
+            Number of decimal places for probability scores.
+        verbose : bool, default True
+            Print prediction summary.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with original features plus ``prediction_label``
+            and (optionally) ``prediction_score`` columns.
+
+        Examples
+        --------
+        >>> preds = exp.predict_model(model)
+        >>> preds = exp.predict_model(model, data=new_df, raw_score=True)
+        """
         self._check_setup()
+        logger.info(
+            "predict_model() called with data=%s",
+            "custom" if data is not None else "test_set",
+        )
         from pycaret_redux.training.finalization import predict_model as _predict
 
         return _predict(
@@ -753,17 +1276,55 @@ class ClassificationExperiment:
         )
 
     def finalize_model(self, estimator: Any) -> Any:
-        """Retrain model on full dataset (train + test)."""
+        """Retrain the model on the full dataset (train + test combined).
+
+        Call this before deployment to use all available data for the
+        final fit. The returned model should not be evaluated further
+        since no hold-out set remains.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to retrain on the complete dataset.
+
+        Returns
+        -------
+        object
+            The re-fitted model estimator.
+
+        Examples
+        --------
+        >>> final_model = exp.finalize_model(tuned_model)
+        >>> exp.save_model(final_model, "production_model")
+        """
         self._check_setup()
+        logger.info("finalize_model() called with estimator=%s", type(estimator).__name__)
         from pycaret_redux.training.finalization import finalize_model as _finalize
 
         return _finalize(estimator=estimator, config=self._config)
 
     def save_model(self, estimator: Any, model_name: str, verbose: bool = True) -> None:
-        """Save model + preprocessing pipeline to disk.
+        """Save the model and preprocessing pipeline to disk.
 
         The saved artifact bundles the estimator and the preprocessing
         pipeline together, so a single file is all you need for deployment.
+
+        Parameters
+        ----------
+        estimator : object
+            Fitted model to persist.
+        model_name : str
+            File path (without extension) for the saved artifact.
+        verbose : bool, default True
+            Print a confirmation message after saving.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        >>> exp.save_model(final_model, "my_classifier")
         """
         from pycaret_redux.persistence.serialization import save_model as _save
 
@@ -778,11 +1339,27 @@ class ClassificationExperiment:
         )
 
     def load_model(self, model_name: str, verbose: bool = True) -> Any:
-        """Load model from disk.
+        """Load a previously saved model from disk.
 
         Returns the fitted estimator. The preprocessing pipeline is also
-        loaded and can be accessed via the returned ModelArtifact when
-        using ``load_model`` from ``pycaret_redux.persistence``.
+        restored internally via the saved ``ModelArtifact``.
+
+        Parameters
+        ----------
+        model_name : str
+            File path (without extension) of the saved artifact.
+        verbose : bool, default True
+            Print a confirmation message after loading.
+
+        Returns
+        -------
+        object
+            The fitted model estimator.
+
+        Examples
+        --------
+        >>> loaded = exp.load_model("my_classifier")
+        >>> preds = exp.predict_model(loaded, data=new_df)
         """
         from pycaret_redux.persistence.serialization import load_model as _load
 
@@ -790,13 +1367,51 @@ class ClassificationExperiment:
         return artifact.estimator
 
     def models(self, turbo_only: bool = False, **kwargs) -> pd.DataFrame:
-        """List available models."""
+        """List all registered classification models.
+
+        Returns a DataFrame summarizing every model in the registry,
+        including its ID, name, and whether it is turbo-eligible.
+
+        Parameters
+        ----------
+        turbo_only : bool, default False
+            When ``True``, only show fast/lightweight models.
+        **kwargs
+            Reserved for future use.
+
+        Returns
+        -------
+        pd.DataFrame
+            Table of available models and their metadata.
+
+        Examples
+        --------
+        >>> exp.models(turbo_only=True)
+        """
         if self._model_registry is None:
             raise RuntimeError("Call setup() first to initialize the model registry.")
         return self._model_registry.list_models(turbo_only=turbo_only)
 
     def get_metrics(self, **kwargs) -> pd.DataFrame:
-        """List available metrics."""
+        """List all registered evaluation metrics.
+
+        Returns a DataFrame with metric IDs, display names, and whether
+        each metric requires predicted probabilities.
+
+        Parameters
+        ----------
+        **kwargs
+            Reserved for future use.
+
+        Returns
+        -------
+        pd.DataFrame
+            Table of available metrics and their properties.
+
+        Examples
+        --------
+        >>> exp.get_metrics()
+        """
         if self._metric_registry is None:
             raise RuntimeError("Call setup() first to initialize the metric registry.")
         return self._metric_registry.to_dataframe()
@@ -812,7 +1427,40 @@ class ClassificationExperiment:
         display_name: str | None = None,
         **kwargs,
     ) -> None:
-        """Register a custom metric."""
+        """Register a custom evaluation metric.
+
+        The metric becomes available in ``compare_models()``,
+        ``create_model()``, and other training methods.
+
+        Parameters
+        ----------
+        id : str
+            Unique identifier for the metric (e.g. ``"mcc"``).
+        name : str
+            Full name of the metric (e.g. ``"Matthews Corr. Coef."``).
+        score_func : callable
+            Scoring function with signature ``(y_true, y_pred)`` or
+            ``(y_true, y_proba)`` when ``needs_proba=True``.
+        greater_is_better : bool, default True
+            Whether a higher value indicates better performance.
+        needs_proba : bool, default False
+            Whether the metric requires predicted probabilities.
+        supports_multiclass : bool, default True
+            Whether the metric supports multiclass targets.
+        display_name : str or None, optional
+            Short label for display tables. Defaults to ``name``.
+        **kwargs
+            Reserved for future use.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        >>> from sklearn.metrics import matthews_corrcoef
+        >>> exp.add_metric("mcc", "MCC", matthews_corrcoef)
+        """
         if self._metric_registry is None:
             raise RuntimeError("Call setup() first.")
         entry = MetricEntry(
@@ -828,10 +1476,348 @@ class ClassificationExperiment:
         self._metric_registry.register(entry)
 
     def remove_metric(self, name_or_id: str) -> None:
-        """Remove a metric."""
+        """Remove a metric from the registry.
+
+        The metric will no longer appear in training and evaluation
+        results after removal.
+
+        Parameters
+        ----------
+        name_or_id : str
+            The metric ID or display name to remove.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        >>> exp.remove_metric("mcc")
+        """
         if self._metric_registry is None:
             raise RuntimeError("Call setup() first.")
         self._metric_registry.remove(name_or_id)
+
+    # ------------------------------------------------------------------
+    # Data drift
+    # ------------------------------------------------------------------
+
+    def check_drift(
+        self,
+        data: pd.DataFrame,
+        numeric_test: str = "ks",
+        categorical_test: str = "chi2",
+        alpha: float = 0.05,
+    ) -> pd.DataFrame:
+        """Check for data drift between training data and new data.
+
+        Compares feature distributions using statistical tests (KS test
+        for numeric, Chi-squared for categorical) and flags drifted features.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            New data to check against the training set.
+        numeric_test : str
+            "ks" (Kolmogorov-Smirnov) or "psi" (Population Stability Index).
+        categorical_test : str
+            "chi2" (Chi-squared test).
+        alpha : float
+            Significance level.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per feature with columns for the test statistic,
+            p-value, and a boolean ``drifted`` flag.
+
+        Examples
+        --------
+        >>> drift_report = exp.check_drift(new_data)
+        >>> drift_report[drift_report["drifted"]]
+        """
+        self._check_setup()
+        from pycaret_redux.utils.drift import check_drift as _check_drift
+
+        return _check_drift(
+            reference=self._config.X_train,
+            current=data,
+            numeric_test=numeric_test,
+            categorical_test=categorical_test,
+            alpha=alpha,
+            numeric_cols=self._config.feature_types.get("Numeric"),
+            categorical_cols=self._config.feature_types.get("Categorical"),
+        )
+
+    # ------------------------------------------------------------------
+    # Statistical comparison
+    # ------------------------------------------------------------------
+
+    def compare_model_stats(
+        self,
+        model_a: Any,
+        model_b: Any,
+        metric: str = "Accuracy",
+        test: str = "wilcoxon",
+        fold: int | Any | None = None,
+        verbose: bool = True,
+    ) -> dict[str, Any]:
+        """Statistical test: is model A significantly different from model B?
+
+        Runs cross-validation on both models and compares their per-fold
+        scores using a paired statistical test.
+
+        Parameters
+        ----------
+        model_a : estimator
+            First model.
+        model_b : estimator
+            Second model.
+        metric : str
+            Metric to compare on. Default "Accuracy".
+        test : str
+            "wilcoxon" (non-parametric) or "ttest" (paired t-test).
+        fold : int or CV splitter, optional
+            Override fold configuration.
+        verbose : bool
+            Print the result.
+
+        Returns
+        -------
+        dict
+            Dictionary with keys ``test``, ``model_a``, ``model_b``,
+            ``model_a_mean``, ``model_b_mean``, ``p_value``,
+            ``significant``, and ``conclusion``.
+
+        Examples
+        --------
+        >>> result = exp.compare_model_stats(lr, rf, metric="AUC")
+        >>> result["p_value"]
+        0.032
+        """
+        self._check_setup()
+        from pycaret_redux.training.cross_validation import run_cross_validation
+        from pycaret_redux.training.stats import compare_model_stats as _compare_stats
+
+        # Run CV for both models
+        _, scores_a, means_a, _ = run_cross_validation(
+            estimator=model_a,
+            config=self._config,
+            metric_registry=self._metric_registry,
+            fold=fold,
+        )
+        _, scores_b, means_b, _ = run_cross_validation(
+            estimator=model_b,
+            config=self._config,
+            metric_registry=self._metric_registry,
+            fold=fold,
+        )
+
+        # Resolve metric to display name
+        metric_entry = self._metric_registry.get(metric)
+        if metric_entry is None:
+            # Try by name
+            for e in self._metric_registry._metrics.values():
+                if e.name.lower() == metric.lower() or e.display_name.lower() == metric.lower():
+                    metric_entry = e
+                    break
+        display_col = metric_entry.display_name
+
+        # Extract per-fold scores from the DataFrame
+        fold_scores_a = scores_a[display_col].iloc[:-2].values  # exclude Mean/SD
+        fold_scores_b = scores_b[display_col].iloc[:-2].values
+
+        result = _compare_stats(
+            model_a_scores=fold_scores_a,
+            model_b_scores=fold_scores_b,
+            model_a_name=type(model_a).__name__,
+            model_b_name=type(model_b).__name__,
+            test=test,
+        )
+
+        if verbose:
+            print(f"\nStatistical Model Comparison ({result['test']})")
+            print(f"  {result['model_a']:30s} mean {display_col}: {result['model_a_mean']}")
+            print(f"  {result['model_b']:30s} mean {display_col}: {result['model_b_mean']}")
+            print(f"  p-value: {result['p_value']}")
+            print(f"  Result:  {result['conclusion']}")
+
+        return result
+
+    # ------------------------------------------------------------------
+    # AutoML
+    # ------------------------------------------------------------------
+
+    def automl(
+        self,
+        optimize: str = "Accuracy",
+        turbo: bool = True,
+        n_top: int = 3,
+        tune_n_iter: int = 10,
+        ensemble: str = "blend",
+        verbose: bool = True,
+    ) -> Any:
+        """Automated ML pipeline: compare, tune, ensemble.
+
+        Runs the full pipeline in one call:
+        1. Compare all models, pick top N
+        2. Tune each top model
+        3. Blend or stack the tuned models
+
+        Parameters
+        ----------
+        optimize : str
+            Metric to optimize throughout. Default "Accuracy".
+        turbo : bool
+            Only use fast models in comparison.
+        n_top : int
+            Number of top models to tune and ensemble.
+        tune_n_iter : int
+            Iterations for hyperparameter tuning per model.
+        ensemble : str
+            "blend" for VotingClassifier, "stack" for StackingClassifier.
+        verbose : bool
+            Print progress.
+
+        Returns
+        -------
+        object
+            The best ensembled (or single) model after the full pipeline.
+
+        Examples
+        --------
+        >>> best = exp.automl(optimize="AUC", n_top=5)
+        >>> exp.predict_model(best)
+        """
+        self._check_setup()
+
+        # Step 1: Compare models
+        if verbose:
+            print("Step 1/3: Comparing models...")
+        top_models = self.compare_models(
+            sort=optimize, n_select=n_top, turbo=turbo, verbose=verbose
+        )
+        if not isinstance(top_models, list):
+            top_models = [top_models]
+
+        # Step 2: Tune each model
+        if verbose:
+            print(f"\nStep 2/3: Tuning top {len(top_models)} models...")
+        tuned_models = []
+        for i, model in enumerate(top_models):
+            if verbose:
+                print(f"  Tuning model {i + 1}/{len(top_models)}: {type(model).__name__}")
+            tuned = self.tune_model(model, optimize=optimize, n_iter=tune_n_iter, verbose=False)
+            tuned_models.append(tuned)
+
+        # Step 3: Ensemble
+        if verbose:
+            print(f"\nStep 3/3: Creating {ensemble} ensemble...")
+        if len(tuned_models) == 1:
+            best = tuned_models[0]
+        elif ensemble == "stack":
+            best = self.stack_models(tuned_models, optimize=optimize, verbose=verbose)
+        else:
+            best = self.blend_models(tuned_models, optimize=optimize, verbose=verbose)
+
+        if verbose:
+            print(f"\nAutoML complete. Final model: {type(best).__name__}")
+        return best
+
+    # ------------------------------------------------------------------
+    # State inspection
+    # ------------------------------------------------------------------
+
+    def pull(self) -> pd.DataFrame:
+        """Return the last CV or comparison result as a DataFrame.
+
+        After ``create_model()``, returns the per-fold CV scores.
+        After ``compare_models()``, returns the model comparison table.
+
+        Returns
+        -------
+        pd.DataFrame
+            Last result table, or empty DataFrame if nothing has run yet.
+
+        Examples
+        --------
+        >>> exp.create_model("lr")
+        >>> exp.pull()  # per-fold CV scores
+        """
+        if self._last_pull is not None:
+            return self._last_pull
+        return pd.DataFrame()
+
+    def get_config(self, variable: str | None = None) -> Any:
+        """Get experiment configuration or a specific variable.
+
+        Parameters
+        ----------
+        variable : str, optional
+            Specific config attribute to return. If None, returns a dict
+            of all configuration. Available keys: seed, target_name,
+            X_train, X_test, y_train, y_test, pipeline, fold_generator,
+            feature_types, is_multiclass, n_jobs, fold.
+
+        Returns
+        -------
+        object or dict
+            Value of the requested config variable, or a dictionary of
+            all configuration when ``variable`` is ``None``.
+
+        Examples
+        --------
+        >>> exp.get_config("seed")
+        42
+        >>> exp.get_config("X_train").shape
+        (700, 10)
+        """
+        self._check_setup()
+        config_map = {
+            "seed": self._config.seed,
+            "target_name": self._config.target_name,
+            "X_train": self._config.X_train,
+            "X_test": self._config.X_test,
+            "y_train": self._config.y_train,
+            "y_test": self._config.y_test,
+            "pipeline": self._config.pipeline,
+            "fold_generator": self._config.fold_generator,
+            "feature_types": self._config.feature_types,
+            "feature_names_in": self._config.feature_names_in,
+            "is_multiclass": self._config.is_multiclass,
+            "n_jobs": self._config.setup_config.n_jobs,
+            "fold": self._config.setup_config.fold,
+            "fold_strategy": self._config.setup_config.fold_strategy,
+            "preprocess": self._config.setup_config.preprocess,
+            "normalize": self._config.setup_config.normalize,
+            "transformation": self._config.setup_config.transformation,
+            "pca": self._config.setup_config.pca,
+            "fix_imbalance": self._config.setup_config.fix_imbalance,
+        }
+        if variable is not None:
+            if variable not in config_map:
+                raise ValueError(
+                    f"Unknown variable '{variable}'. Available: {', '.join(config_map.keys())}"
+                )
+            return config_map[variable]
+        return config_map
+
+    def get_pipeline(self) -> Any:
+        """Return the fitted preprocessing pipeline.
+
+        Returns
+        -------
+        sklearn.pipeline.Pipeline or None
+            The preprocessing pipeline, or ``None`` if ``preprocess=False``
+            was passed to ``setup()``.
+
+        Examples
+        --------
+        >>> pipe = exp.get_pipeline()
+        >>> pipe.transform(new_data)
+        """
+        self._check_setup()
+        return self._config.pipeline
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -855,10 +1841,22 @@ class ClassificationExperiment:
                     return StratifiedKFold(n_splits=n_folds, shuffle=shuffle, random_state=rs)
                 case "kfold":
                     return KFold(n_splits=n_folds, shuffle=shuffle, random_state=rs)
+                case "groupkfold":
+                    return GroupKFold(n_splits=n_folds)
+                case "timeseries":
+                    return TimeSeriesSplit(n_splits=n_folds)
+                case "repeatedstratifiedkfold":
+                    return RepeatedStratifiedKFold(
+                        n_splits=n_folds, n_repeats=3, random_state=seed
+                    )
+                case "repeatedkfold":
+                    return RepeatedKFold(n_splits=n_folds, n_repeats=3, random_state=seed)
                 case _:
                     raise ValueError(
                         f"Unknown fold_strategy: '{strategy}'. "
-                        "Use 'stratifiedkfold', 'kfold', or pass a CV splitter."
+                        "Use 'stratifiedkfold', 'kfold', 'groupkfold', "
+                        "'timeseries', 'repeatedstratifiedkfold', 'repeatedkfold', "
+                        "or pass a CV splitter object."
                     )
         # Assume it's a sklearn CV splitter
         return strategy
