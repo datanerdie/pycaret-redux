@@ -49,15 +49,16 @@ best_model = exp.automl(optimize="Accuracy", n_top=3, ensemble="blend")
 | **Setup** | `setup()` with 35+ preprocessing options, `profile=True` for data profiling |
 | **Modeling** | `compare_models()`, `create_model()`, `tune_model()`, `automl()` |
 | **Ensembles** | `blend_models()`, `stack_models()`, `ensemble_model()` |
-| **Evaluation** | `evaluate_model()`, `predict_model()`, `pull()` |
-| **Plots** | `plot_model()` — 14 plot types |
-| **Calibration** | `calibrate_model()`, `optimize_threshold()` |
-| **Statistics** | `compare_model_stats()`, `compare_multiple_stats()`, `compare_5x2cv()` |
+| **Evaluation** | `evaluate_model()` with bootstrap CI, `predict_model()`, `pull()` |
+| **Plots** | `plot_model()` — 14 plot types including permutation importance |
+| **Calibration** | `calibrate_model()` with Brier/log loss, `optimize_threshold()` |
+| **Statistics** | 6 tests: McNemar, Wilcoxon, t-test, Cochran's Q, 5x2cv F, DeLong |
 | **Diagnostics** | `diagnose_bias_variance()`, `get_oob_score()`, `check_drift()` |
-| **Advanced CV** | `nested_cv()` + 6 fold strategies |
+| **Advanced CV** | `nested_cv()` + 6 fold strategies + 95% confidence intervals |
 | **Deployment** | `finalize_model()`, `save_model()`, `load_model()`, `predict_from_artifact()` |
 | **Inspection** | `models()`, `get_metrics()`, `get_config()`, `get_pipeline()` |
 | **Extensibility** | `add_metric()`, `remove_metric()`, custom estimators |
+| **Display** | PyCaret-style styled tables, auto dark/light theme detection |
 
 ## Guide
 
@@ -74,9 +75,14 @@ exp.setup(
 
     # Preprocessing
     normalize=True,
-    normalize_method="zscore",         # zscore, minmax, maxabs, robust
+    normalize_method="zscore",            # zscore, minmax, maxabs, robust
     transformation=True,
     transformation_method="yeo-johnson",  # yeo-johnson, quantile, or "auto" (per-feature skew detection)
+
+    # Categorical encoding
+    max_encoding_ohe=25,                  # OHE for features with <=25 categories
+    drop_first_ohe=True,                  # drop first column to avoid dummy trap (for LR, Ridge)
+    # Binary features (2 values) are automatically ordinal-encoded, not OHE'd
 
     # Feature engineering
     polynomial_features=True,
@@ -86,14 +92,14 @@ exp.setup(
 
     # Dimensionality reduction
     pca=True,
-    pca_method="linear",               # linear, kernel, incremental, random, sparse_random, lda
+    pca_method="linear",                  # linear, kernel, incremental, random, sparse_random, lda
 
     # Feature selection
     feature_selection=True,
-    feature_selection_method="classic", # classic (SelectKBest), sequential, rfe
+    feature_selection_method="classic",   # classic (SelectKBest), sequential, rfe
 
     # Missing values
-    numeric_imputation="mean",         # mean, median, mode, knn
+    numeric_imputation="mean",            # mean, median, mode, knn
     categorical_imputation="mode",
 
     # Outliers
@@ -102,10 +108,10 @@ exp.setup(
 
     # Imbalance handling
     fix_imbalance=True,
-    fix_imbalance_method="SMOTE",      # SMOTE, ADASYN, RandomOverSampler, or "class_weight"
+    fix_imbalance_method="SMOTE",         # SMOTE, ADASYN, RandomOverSampler, or "class_weight"
 
     # Data profiling
-    profile=True,                      # shows class distribution, missing values, correlations, warnings
+    profile=True,                         # class distribution, missing values, correlations, warnings
 )
 ```
 
@@ -178,7 +184,7 @@ exp.plot_model(model, plot="feature")          # Feature importance
 exp.plot_model(model, plot="permutation")      # Permutation importance (model-agnostic)
 exp.plot_model(model, plot="class_report")     # Classification report heatmap
 exp.plot_model(model, plot="calibration")      # Calibration curve
-exp.plot_model(model, plot="learning")         # Learning curve
+exp.plot_model(model, plot="learning")         # Learning curve (bias/variance)
 exp.plot_model(model, plot="vc")               # Validation curve
 exp.plot_model(model, plot="lift")             # Lift chart (binary)
 exp.plot_model(model, plot="gain")             # Gain chart (binary)
@@ -190,8 +196,13 @@ exp.plot_model(model, plot="auc", save="roc.png")  # save to file
 
 ### Evaluation & Predictions
 
+`evaluate_model` computes bootstrap 95% confidence intervals (1000 resamples):
+
 ```python
 exp.evaluate_model(model)
+# Output: Metric | Score | 95% CI
+#         Accuracy  0.9561  [0.9211, 0.9825]
+
 preds = exp.predict_model(model)
 preds = exp.predict_model(model, data=new_df)
 preds = exp.predict_model(model, raw_score=True)
@@ -200,18 +211,27 @@ preds = exp.predict_model(model, probability_threshold=0.7)
 
 ### Calibration & Threshold Optimization
 
+`calibrate_model` shows before/after Brier Score and Log Loss:
+
 ```python
 calibrated = exp.calibrate_model(model, method="sigmoid")  # or "isotonic"
+# Output:          Brier Score   Log Loss
+#         Before   0.0412        0.1389
+#         After    0.0398        0.1301
+
 model, threshold = exp.optimize_threshold(model, optimize="F1")
 ```
 
 ### Statistical Model Comparison
 
-Five statistical tests for rigorous model comparison:
+Six statistical tests for rigorous model comparison:
 
 ```python
 # McNemar's test (pairwise, on prediction disagreements)
 exp.compare_model_stats(lr, rf, test="mcnemar")
+
+# DeLong test (pairwise, compares AUC curves directly)
+exp.compare_model_stats(lr, rf, test="delong")
 
 # Wilcoxon signed-rank test (pairwise, on CV fold scores)
 exp.compare_model_stats(lr, rf, metric="Accuracy", test="wilcoxon")
@@ -228,7 +248,7 @@ exp.compare_5x2cv(lr, rf)
 
 ### Nested Cross-Validation
 
-Unbiased evaluation: inner loop tunes, outer loop evaluates.
+Unbiased evaluation: inner loop tunes, outer loop evaluates. Results include 95% CI.
 
 ```python
 scores = exp.nested_cv("rf", n_iter=20)
@@ -325,10 +345,15 @@ exp.setup(data=df, target="target")  # all steps now logged
 | Architecture | 5-level inheritance, 220K-line monoliths | Single class, composition |
 | Pipeline | imblearn Pipeline | sklearn Pipeline + ColumnTransformer |
 | Model registry | 23 container classes | Data-driven `ModelEntry` dataclasses |
+| Encoding | Fixed OHE for all categoricals | Smart: binary→ordinal, multi→OHE, optional drop_first |
 | API | Functional + OOP | OOP only (no global state) |
 | Deployment | Save model only | Bundles pipeline + model in one file |
-| Statistical tests | None | 5 tests (McNemar, Wilcoxon, t-test, Cochran's Q, 5x2cv F) |
+| Evaluation | Point estimates only | Bootstrap 95% CI on all metrics |
+| Calibration | Basic | Shows before/after Brier Score + Log Loss |
+| Statistical tests | None | 6 tests (McNemar, DeLong, Wilcoxon, t-test, Cochran's Q, 5x2cv F) |
 | Diagnostics | None | Bias-variance, OOB, drift detection, nested CV |
+| Tuning | Grid/Random only | + HalvingRandomSearchCV (successive halving) |
+| Display | Light theme only | Auto dark/light theme detection |
 | Python | 3.8+ | 3.12+ |
 | Dependencies | numpy<1.27, pandas<2.2, sklearn<1.5 | numpy 2.x, pandas 2.x, sklearn 1.6+ |
 
