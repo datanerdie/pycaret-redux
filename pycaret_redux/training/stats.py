@@ -57,6 +57,8 @@ def compare_model_stats(
     elif test == "wilcoxon":
         # Wilcoxon needs non-zero differences
         if np.allclose(a, b):
+            statistic, p_value = 0.0, 1.0
+        else:
             statistic, p_value = stats.wilcoxon(a, b)
         test_name = "Wilcoxon signed-rank test"
     else:
