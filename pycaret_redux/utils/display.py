@@ -22,63 +22,14 @@ def _in_notebook() -> bool:
         return False
 
 
-def _is_dark_theme() -> bool:
-    """Best-effort detection of dark theme in Jupyter/VS Code.
-
-    Checks environment variables set by VS Code and Jupyter.
-    Falls back to False (light theme) if detection fails.
-    """
-    if not _in_notebook():
-        return False
-    try:
-        import os
-
-        # VS Code: check the color theme kind (most reliable)
-        vscode_kind = os.environ.get("VSCODE_COLOR_THEME_KIND", "").lower()
-        if vscode_kind in ("dark", "hc-dark"):
-            return True
-
-        # Jupyter: check theme env
-        theme_env = os.environ.get("JUPYTER_THEME", "").lower()
-        if "dark" in theme_env:
-            return True
-
-    except Exception:
-        pass
-    return False
-
-
-# Cache the theme detection result for the session
-_DARK_THEME: bool | None = None
-
-
-def _get_dark_theme() -> bool:
-    """Get cached dark theme detection result."""
-    global _DARK_THEME
-    if _DARK_THEME is None:
-        _DARK_THEME = _is_dark_theme()
-    return _DARK_THEME
-
-
-# Color schemes
-_COLORS_LIGHT = {
-    "highlight": "yellow",
-    "setup_true": "lightgreen",
-    "timing": "lightgrey",
+# Theme-agnostic color styles: each pairs a background with an explicit
+# text color so the output is readable on both light and dark backgrounds.
+_STYLES = {
+    "highlight": "background-color: #fff3cd; color: #664d03",  # warm amber
+    "setup_true": "background-color: #d1e7dd; color: #0f5132",  # green
+    "timing": "background-color: #e2e3e5; color: #41464b",  # grey
     "bold": "font-weight: bold; text-align: left",
 }
-
-_COLORS_DARK = {
-    "highlight": "#665500",  # muted gold
-    "setup_true": "#1a4d1a",  # dark green
-    "timing": "#333333",  # dark grey
-    "bold": "font-weight: bold; text-align: left; color: #e0e0e0",
-}
-
-
-def _colors() -> dict[str, str]:
-    """Get the color scheme for the current theme."""
-    return _COLORS_DARK if _get_dark_theme() else _COLORS_LIGHT
 
 
 def _ipython_display(obj: Any) -> None:
@@ -179,8 +130,8 @@ def display_setup_summary(config: Any) -> None:
 
 def _highlight_setup(column: pd.Series) -> list[str]:
     """Highlight True/Yes values with lightgreen background (PyCaret style)."""
-    c = _colors()["setup_true"]
-    return [f"background-color: {c}" if v is True or v == "Yes" else "" for v in column]
+    s = _STYLES["setup_true"]
+    return [s if v is True or v == "Yes" else "" for v in column]
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +142,7 @@ def _highlight_setup(column: pd.Series) -> list[str]:
 def display_fold_scores(fold_scores: pd.DataFrame, model_name: str = "") -> None:
     """Display CV fold scores with yellow-highlighted Mean row."""
     if _in_notebook():
-        styled = _color_df(fold_scores, _colors()["highlight"], ["Mean"], axis=1)
+        styled = _color_df(fold_scores, _STYLES["highlight"], ["Mean"], axis=1)
         styled = styled.format(precision=4)
         _ipython_display(styled)
     else:
@@ -200,16 +151,19 @@ def display_fold_scores(fold_scores: pd.DataFrame, model_name: str = "") -> None
 
 def _color_df(
     df: pd.DataFrame,
-    color: str,
+    style: str,
     names: list,
     axis: int = 1,
 ) -> pd.io.formats.style.Styler:
-    """Color specific rows (axis=1) or columns (axis=0) of a DataFrame.
+    """Apply CSS style to specific rows (axis=1) or columns (axis=0).
 
-    Replicates PyCaret's color_df utility.
+    Parameters
+    ----------
+    style : str
+        Full CSS style string (e.g. "background-color: #fff3cd; color: #664d03").
     """
     return df.style.apply(
-        lambda x: [f"background: {color}" if (x.name in names) else "" for _ in x],
+        lambda x: [style if (x.name in names) else "" for _ in x],
         axis=axis,
     )
 
@@ -240,33 +194,25 @@ def display_comparison(
 def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     """Apply PyCaret-style highlighting to comparison DataFrame.
 
-    - Yellow background on best (max) value per metric column
-    - Lightgrey background on TT (Sec) column
-    - Model column bold and left-aligned
+    Uses theme-agnostic colors with explicit text colors for readability
+    on both light and dark backgrounds.
     """
     metric_cols = [c for c in df.columns if c not in ("Model", "TT (Sec)")]
 
+    highlight_style = _STYLES["highlight"]
+
     def highlight_max(s: pd.Series) -> list[str]:
         is_best = s == s.max()
-        c = _colors()["highlight"]
-        return [f"background-color: {c}" if v else "" for v in is_best]
+        return [highlight_style if v else "" for v in is_best]
 
     styler = df.style
     if metric_cols:
         styler = styler.apply(highlight_max, subset=metric_cols)
 
-    # Lightgrey on TT (Sec) column
     if "TT (Sec)" in df.columns:
-        styler = styler.map(
-            lambda _: f"background-color: {_colors()['timing']}",
-            subset=["TT (Sec)"],
-        )
+        styler = styler.map(lambda _: _STYLES["timing"], subset=["TT (Sec)"])
 
-    # Bold the model column
-    styler = styler.map(
-        lambda _: _colors()["bold"],
-        subset=["Model"],
-    )
+    styler = styler.map(lambda _: _STYLES["bold"], subset=["Model"])
     return styler
 
 
