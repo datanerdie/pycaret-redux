@@ -46,19 +46,21 @@ best_model = exp.automl(optimize="Accuracy", n_top=3, ensemble="blend")
 
 | Category | Methods |
 |----------|---------|
-| **Setup** | `setup()` with 35+ preprocessing options, `profile=True` for data profiling |
+| **Setup** | `setup()` with 35+ preprocessing options, `profile=True`, feature labels |
 | **Modeling** | `compare_models()`, `create_model()`, `tune_model()`, `automl()` |
 | **Ensembles** | `blend_models()`, `stack_models()`, `ensemble_model()` |
 | **Evaluation** | `evaluate_model()` with bootstrap CI, `predict_model()`, `pull()` |
-| **Plots** | `plot_model()` — 14 plot types including permutation importance |
+| **Plots** | `plot_model()` — 14 types with human-readable feature labels |
 | **Calibration** | `calibrate_model()` with Brier/log loss, `optimize_threshold()` |
-| **Statistics** | 6 tests: McNemar, Wilcoxon, t-test, Cochran's Q, 5x2cv F, DeLong |
+| **Statistics** | 6 tests: McNemar, DeLong, Wilcoxon, t-test, Cochran's Q, 5x2cv F |
 | **Diagnostics** | `diagnose_bias_variance()`, `get_oob_score()`, `check_drift()` |
 | **Advanced CV** | `nested_cv()` + 6 fold strategies + 95% confidence intervals |
 | **Deployment** | `finalize_model()`, `save_model()`, `load_model()`, `predict_from_artifact()` |
 | **Inspection** | `models()`, `get_metrics()`, `get_config()`, `get_pipeline()` |
 | **Extensibility** | `add_metric()`, `remove_metric()`, custom estimators |
-| **Display** | PyCaret-style styled tables, auto dark/light theme detection |
+| **Display** | PyCaret-style tables, theme-agnostic colors, data source banners |
+
+Every method prints a **data source banner** showing which data is used (training set, test set, or CV), so there's full transparency and no hidden leakage.
 
 ## Guide
 
@@ -79,10 +81,18 @@ exp.setup(
     transformation=True,
     transformation_method="yeo-johnson",  # yeo-johnson, quantile, or "auto" (per-feature skew detection)
 
-    # Categorical encoding
+    # Categorical encoding (SmartEncoder)
+    categorical_features=["smoking", "marital_status"],  # specify which are categorical
     max_encoding_ohe=25,                  # OHE for features with <=25 categories
     drop_first_ohe=True,                  # drop first column to avoid dummy trap (for LR, Ridge)
     # Binary features (2 values) are automatically ordinal-encoded, not OHE'd
+
+    # Feature labels for readable plots
+    feature_labels={
+        "smoking": {0: "No", 1: "Yes"},
+        "marital_status": {1: "Married", 2: "Single", 3: "Divorced"},
+    },
+    target_labels={0: "Healthy", 1: "At Risk"},
 
     # Feature engineering
     polynomial_features=True,
@@ -141,15 +151,17 @@ rf = exp.create_model("rf")
 hgbc = exp.create_model("hgbc")     # HistGradientBoosting (fast, handles missing values)
 dt = exp.create_model("dt", max_depth=5)
 
-# Standard random search
+# Standard random search (search space auto-adapts to your dataset)
 tuned = exp.tune_model(rf, n_iter=50, optimize="F1")
 
 # HalvingRandomSearchCV (successive halving — much faster)
 tuned = exp.tune_model(rf, search_library="halving", optimize="Accuracy")
 
-# Custom grid
+# Custom grid (bypasses data-aware adaptation)
 tuned = exp.tune_model(dt, custom_grid={"max_depth": [3, 5, 7, 10]})
 ```
+
+Search spaces auto-adapt based on dataset size and dimensionality: `max_depth` is capped at log2(n_samples), `min_samples_leaf` scales as a percentage of training size, `C`/`alpha` ranges widen for high-dimensional data, etc.
 
 Available models: `lr`, `knn`, `nb`, `dt`, `svm`, `rbfsvm`, `gpc`, `mlp`, `ridge`, `rf`, `qda`, `ada`, `gbc`, `hgbc`, `lda`, `et`, `dummy`, and optionally `xgboost`, `lightgbm`, `catboost`.
 
@@ -175,12 +187,14 @@ best_model = exp.automl(
 
 ### Plots (14 types)
 
+Feature labels from `setup()` are used automatically — binary features show as `smoking`, multi-category as `marital_status: Single`.
+
 ```python
 exp.plot_model(model, plot="auc")              # ROC/AUC curve
 exp.plot_model(model, plot="confusion_matrix") # Confusion matrix
 exp.plot_model(model, plot="pr")               # Precision-recall curve
 exp.plot_model(model, plot="threshold")        # Metrics vs threshold (binary)
-exp.plot_model(model, plot="feature")          # Feature importance
+exp.plot_model(model, plot="feature")          # Feature importance (with labels)
 exp.plot_model(model, plot="permutation")      # Permutation importance (model-agnostic)
 exp.plot_model(model, plot="class_report")     # Classification report heatmap
 exp.plot_model(model, plot="calibration")      # Calibration curve
@@ -219,6 +233,7 @@ calibrated = exp.calibrate_model(model, method="sigmoid")  # or "isotonic"
 #         Before   0.0412        0.1389
 #         After    0.0398        0.1301
 
+# Threshold found via CV on training data (no test set leakage)
 model, threshold = exp.optimize_threshold(model, optimize="F1")
 ```
 
@@ -227,11 +242,11 @@ model, threshold = exp.optimize_threshold(model, optimize="F1")
 Six statistical tests for rigorous model comparison:
 
 ```python
+# DeLong test (compares AUC curves directly)
+exp.compare_model_stats(lr, rf, test="delong")
+
 # McNemar's test (pairwise, on prediction disagreements)
 exp.compare_model_stats(lr, rf, test="mcnemar")
-
-# DeLong test (pairwise, compares AUC curves directly)
-exp.compare_model_stats(lr, rf, test="delong")
 
 # Wilcoxon signed-rank test (pairwise, on CV fold scores)
 exp.compare_model_stats(lr, rf, metric="Accuracy", test="wilcoxon")
@@ -338,6 +353,26 @@ logging.basicConfig(level=logging.INFO)
 exp.setup(data=df, target="target")  # all steps now logged
 ```
 
+## Data Leakage Prevention
+
+Every method follows strict data separation:
+
+| Method | Data Used | Details |
+|--------|-----------|---------|
+| `setup()` | Full data → split into train/test | Pipeline fit on train only |
+| `compare_models()` | Training set (CV) | Test set never seen |
+| `create_model()` | Training set (CV) | Refit on full train after CV |
+| `tune_model()` | Training set (CV) | Search spaces auto-adapted |
+| `optimize_threshold()` | Training set (CV predictions) | No test set leakage |
+| `calibrate_model()` | Training set (internal CV) | Estimator cloned |
+| `plot_model()` | Test set (most plots) | Learning/VC curves use train |
+| `evaluate_model()` | Test set | Bootstrap CI from test predictions |
+| `predict_model()` | Test set or new data | Pipeline transforms only |
+| `finalize_model()` | Train + test combined | For final deployment |
+| `nested_cv()` | Training set only | Inner/outer loops separated |
+
+Each method prints a data source banner in its output for full transparency.
+
 ## What Changed from Original PyCaret
 
 | | Original PyCaret | PyCaret Redux |
@@ -345,15 +380,18 @@ exp.setup(data=df, target="target")  # all steps now logged
 | Architecture | 5-level inheritance, 220K-line monoliths | Single class, composition |
 | Pipeline | imblearn Pipeline | sklearn Pipeline + ColumnTransformer |
 | Model registry | 23 container classes | Data-driven `ModelEntry` dataclasses |
-| Encoding | Fixed OHE for all categoricals | Smart: binary→ordinal, multi→OHE, optional drop_first |
+| Encoding | Fixed OHE for all categoricals | Smart: binary→ordinal, multi→OHE, `drop_first` |
+| Feature labels | None | `feature_labels` for readable plot axis names |
+| Tuning | Fixed search grids | Data-aware: adapts to n_samples, n_features |
 | API | Functional + OOP | OOP only (no global state) |
 | Deployment | Save model only | Bundles pipeline + model in one file |
 | Evaluation | Point estimates only | Bootstrap 95% CI on all metrics |
-| Calibration | Basic | Shows before/after Brier Score + Log Loss |
+| Calibration | Basic | Before/after Brier Score + Log Loss |
 | Statistical tests | None | 6 tests (McNemar, DeLong, Wilcoxon, t-test, Cochran's Q, 5x2cv F) |
 | Diagnostics | None | Bias-variance, OOB, drift detection, nested CV |
-| Tuning | Grid/Random only | + HalvingRandomSearchCV (successive halving) |
-| Display | Light theme only | Auto dark/light theme detection |
+| Threshold tuning | On test set (leakage) | CV predictions on training set |
+| Tuning speed | Grid/Random only | + HalvingRandomSearchCV |
+| Display | Light theme only | Theme-agnostic colors with data source banners |
 | Python | 3.8+ | 3.12+ |
 | Dependencies | numpy<1.27, pandas<2.2, sklearn<1.5 | numpy 2.x, pandas 2.x, sklearn 1.6+ |
 
