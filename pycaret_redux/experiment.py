@@ -966,17 +966,25 @@ class ClassificationExperiment:
 
         registry = build_default_registry()
 
-        # Prepare transformed test data for the estimator
-        X_test = self._config.X_test
-        y_test = self._config.y_test
-        if self._config.pipeline is not None:
-            X_test = self._config.pipeline.transform(X_test)
+        # Learning/validation curves need training data and refit
+        refit_plots = {"learning", "vc"}
+        if plot in refit_plots:
+            X = self._config.X_train
+            y = self._config.y_train
+            if self._config.pipeline is not None:
+                X = self._config.pipeline.transform(X)
+            kwargs["cv"] = kwargs.get("cv", self._config.fold_generator)
+        else:
+            X = self._config.X_test
+            y = self._config.y_test
+            if self._config.pipeline is not None:
+                X = self._config.pipeline.transform(X)
 
         return registry.render(
             plot_id=plot,
             estimator=estimator,
-            X=X_test,
-            y=y_test,
+            X=X,
+            y=y,
             is_multiclass=self._config.is_multiclass,
             save=save,
             **kwargs,
@@ -1005,8 +1013,12 @@ class ClassificationExperiment:
         >>> exp.evaluate_model(model)
         """
         self._check_setup()
+        import numpy as np
+
         from pycaret_redux.metrics.scoring import calculate_metrics
         from pycaret_redux.utils.display import display_evaluation
+
+        n_bootstrap = kwargs.get("n_bootstrap", 1000)
 
         X_test = self._config.X_test
         y_test = self._config.y_test
@@ -1018,11 +1030,37 @@ class ClassificationExperiment:
         if hasattr(estimator, "predict_proba"):
             y_proba = estimator.predict_proba(X_test)
 
+        # Point estimates
         scores = calculate_metrics(y_test, y_pred, y_proba, self._metric_registry)
+
+        # Bootstrap 95% CI
+        rng = np.random.RandomState(self._config.seed)
+        n = len(y_test)
+        boot_scores: dict[str, list[float]] = {k: [] for k in scores}
+
+        y_test_arr = np.asarray(y_test)
+        y_pred_arr = np.asarray(y_pred)
+        y_proba_arr = np.asarray(y_proba) if y_proba is not None else None
+
+        for _ in range(n_bootstrap):
+            idx = rng.randint(0, n, size=n)
+            y_t = y_test_arr[idx]
+            y_p = y_pred_arr[idx]
+            y_pp = y_proba_arr[idx] if y_proba_arr is not None else None
+            boot = calculate_metrics(y_t, y_p, y_pp, self._metric_registry)
+            for k, v in boot.items():
+                boot_scores[k].append(v)
+
+        ci_map: dict[str, tuple[float, float]] = {}
+        for k, vals in boot_scores.items():
+            lower = round(float(np.percentile(vals, 2.5)), 4)
+            upper = round(float(np.percentile(vals, 97.5)), 4)
+            ci_map[k] = (lower, upper)
+
         metric_names = {
             mid: e.display_name for mid, e in self._metric_registry.get_active().items()
         }
-        display_evaluation(scores, metric_names)
+        display_evaluation(scores, metric_names, ci_map=ci_map)
 
     def interpret_model(self, estimator: Any, plot: str = "summary", **kwargs) -> Any:
         """Generate SHAP-based model interpretation plots.
@@ -1131,7 +1169,45 @@ class ClassificationExperiment:
         calibrated.fit(X_train, y_train)
 
         if verbose:
+            from sklearn.metrics import brier_score_loss, log_loss
+
+            X_test = self._config.X_test
+            y_test = self._config.y_test
+            if self._config.pipeline is not None:
+                X_test = self._config.pipeline.transform(X_test)
+
             print(f"Calibrated model created (method={method}).")
+
+            # Compare before/after calibration metrics
+            rows = []
+            for label, est in [("Before", estimator), ("After", calibrated)]:
+                if hasattr(est, "predict_proba"):
+                    proba = est.predict_proba(X_test)
+                    if proba.ndim == 2 and proba.shape[1] == 2:
+                        proba_pos = proba[:, 1]
+                    else:
+                        proba_pos = proba
+                    try:
+                        brier = round(brier_score_loss(y_test, proba_pos), 4)
+                    except Exception:
+                        brier = "N/A"
+                    try:
+                        ll = round(log_loss(y_test, proba), 4)
+                    except Exception:
+                        ll = "N/A"
+                    rows.append({"": label, "Brier Score": brier, "Log Loss": ll})
+
+            if rows:
+                import pandas as _pd
+
+                from pycaret_redux.utils.display import _in_notebook, _ipython_display
+
+                cal_df = _pd.DataFrame(rows)
+                if _in_notebook():
+                    _ipython_display(cal_df.style.hide(axis="index"))
+                else:
+                    print(cal_df.to_string(index=False))
+
         return calibrated
 
     def optimize_threshold(

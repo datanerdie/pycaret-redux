@@ -214,23 +214,36 @@ def _highlight_comparison(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 # ---------------------------------------------------------------------------
 
 
-def display_evaluation(scores: dict[str, float], metric_names: dict[str, str]) -> None:
-    """Display evaluation metrics as a styled DataFrame."""
+def display_evaluation(
+    scores: dict[str, float],
+    metric_names: dict[str, str],
+    ci_map: dict[str, tuple[float, float]] | None = None,
+) -> None:
+    """Display evaluation metrics with optional bootstrap confidence intervals."""
     rows = []
     for metric_id, score in scores.items():
         name = metric_names.get(metric_id, metric_id)
-        rows.append({"Metric": name, "Score": score})
+        row = {"Metric": name, "Score": score}
+        if ci_map and metric_id in ci_map:
+            lower, upper = ci_map[metric_id]
+            row["95% CI"] = f"[{lower}, {upper}]"
+        rows.append(row)
 
     eval_df = pd.DataFrame(rows)
 
     if _in_notebook():
-        styled = eval_df.style.format({"Score": "{:.4f}"}).hide(axis="index")
+        format_dict = {"Score": "{:.4f}"}
+        styled = eval_df.style.format(format_dict).hide(axis="index")
         _ipython_display(styled)
     else:
         print("\nModel Evaluation on Test Set:")
         for metric_id, score in scores.items():
             name = metric_names.get(metric_id, metric_id)
-            print(f"  {name:15s}: {score:.4f}")
+            ci_str = ""
+            if ci_map and metric_id in ci_map:
+                lower, upper = ci_map[metric_id]
+                ci_str = f"  [{lower}, {upper}]"
+            print(f"  {name:15s}: {score:.4f}{ci_str}")
 
 
 # ---------------------------------------------------------------------------
