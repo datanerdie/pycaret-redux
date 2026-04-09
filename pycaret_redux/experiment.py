@@ -546,6 +546,10 @@ class ClassificationExperiment:
         >>> exp.pull()  # leaderboard DataFrame
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source("compare_models", "CV on training set only. Test set not used.")
         logger.info(
             "compare_models() called with sort=%r, n_select=%d, turbo=%s",
             sort,
@@ -622,6 +626,12 @@ class ClassificationExperiment:
         >>> scores = exp.pull()
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "create_model", "CV on training set. Model refit on full training set after CV."
+            )
         logger.info(
             "create_model() called with estimator=%r, cross_validation=%s",
             estimator,
@@ -699,6 +709,10 @@ class ClassificationExperiment:
         >>> tuned_lr = exp.tune_model(model, n_iter=50, optimize="AUC")
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source("tune_model", "CV on training set only. Test set not used.")
         logger.info(
             "tune_model() called with optimize=%r, n_iter=%d, search_library=%r",
             optimize,
@@ -771,6 +785,13 @@ class ClassificationExperiment:
         >>> blended = exp.blend_models([model1, model2, model3])
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "blend_models",
+                "CV on training set. Ensemble refit on full training set.",
+            )
         logger.info(
             "blend_models() called with %d estimators, method=%r",
             len(estimator_list),
@@ -843,6 +864,13 @@ class ClassificationExperiment:
         >>> stacked = exp.stack_models([lr, rf, xgb])
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "stack_models",
+                "CV on training set. Stacking refit on full training set.",
+            )
         logger.info("stack_models() called with %d estimators", len(estimator_list))
         from pycaret_redux.training.ensembles import stack_models as _stack
 
@@ -906,6 +934,13 @@ class ClassificationExperiment:
         >>> bagged = exp.ensemble_model(model, n_estimators=20)
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "ensemble_model",
+                "CV on training set. Bagging refit on full training set.",
+            )
         logger.info(
             "ensemble_model() called with method=%r, n_estimators=%d",
             method,
@@ -964,6 +999,12 @@ class ClassificationExperiment:
         >>> exp.plot_model(model, plot="auc", save="auc_plot.png")
         """
         self._check_setup()
+        from pycaret_redux.utils.display import display_data_source
+
+        display_data_source(
+            "plot_model",
+            "Test set (held out). Learning/validation curves use training set with CV.",
+        )
         from pycaret_redux.plots.registry import build_default_registry
 
         registry = build_default_registry()
@@ -1015,6 +1056,12 @@ class ClassificationExperiment:
         >>> exp.evaluate_model(model)
         """
         self._check_setup()
+        from pycaret_redux.utils.display import display_data_source
+
+        display_data_source(
+            "evaluate_model",
+            "Test set (held out). Bootstrap CI via resampling test predictions.",
+        )
         import numpy as np
 
         from pycaret_redux.metrics.scoring import calculate_metrics
@@ -1153,6 +1200,13 @@ class ClassificationExperiment:
         >>> calibrated = exp.calibrate_model(model, method="isotonic")
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "calibrate_model",
+                "Training set with internal CV. Estimator cloned and refit.",
+            )
         from sklearn.base import clone
         from sklearn.calibration import CalibratedClassifierCV
 
@@ -1220,8 +1274,9 @@ class ClassificationExperiment:
     ) -> tuple[Any, float]:
         """Find the optimal decision threshold for binary classification.
 
-        Sweeps thresholds from 0.01 to 0.99 and selects the one that
-        maximizes the chosen metric on the hold-out test set.
+        Uses cross-validated predictions on the **training set** to find
+        the threshold, avoiding data leakage from the test set. The CV
+        fold-out predictions ensure the threshold generalizes.
 
         Parameters
         ----------
@@ -1251,6 +1306,13 @@ class ClassificationExperiment:
         0.42
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "optimize_threshold",
+                "CV predictions on training set. Test set not used.",
+            )
         if self._config.is_multiclass:
             raise ValueError("optimize_threshold is only for binary classification.")
 
@@ -1259,6 +1321,7 @@ class ClassificationExperiment:
 
         import numpy as np
         from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+        from sklearn.model_selection import cross_val_predict
 
         metric_funcs = {
             "f1": f1_score,
@@ -1272,27 +1335,37 @@ class ClassificationExperiment:
 
         score_func = metric_funcs[opt_lower]
 
-        X_test = self._config.X_test
-        y_test = self._config.y_test
+        # Use CV predictions on TRAINING data to avoid test set leakage
+        X_train = self._config.X_train
+        y_train = self._config.y_train
         if self._config.pipeline is not None:
-            X_test = self._config.pipeline.transform(X_test)
+            X_train = self._config.pipeline.transform(X_train)
 
-        probas = estimator.predict_proba(X_test)[:, 1]
+        cv_probas = cross_val_predict(
+            estimator,
+            X_train,
+            y_train,
+            cv=self._config.fold_generator,
+            method="predict_proba",
+        )[:, 1]
 
         best_threshold = 0.5
         best_score = 0.0
         for threshold in np.arange(0.01, 1.0, 0.01):
-            preds = (probas >= threshold).astype(int)
+            preds = (cv_probas >= threshold).astype(int)
             if opt_lower != "accuracy":
-                score = score_func(y_test, preds, zero_division=0)
+                score = score_func(y_train, preds, zero_division=0)
             else:
-                score = score_func(y_test, preds)
+                score = score_func(y_train, preds)
             if score > best_score:
                 best_score = score
                 best_threshold = threshold
 
         if verbose:
-            print(f"Optimal threshold: {best_threshold:.2f} ({optimize}={best_score:.4f})")
+            print(
+                f"Optimal threshold: {best_threshold:.2f} "
+                f"({optimize}={best_score:.4f}, via CV on training data)"
+            )
 
         return estimator, round(best_threshold, 2)
 
@@ -1338,6 +1411,13 @@ class ClassificationExperiment:
         >>> preds = exp.predict_model(model, data=new_df, raw_score=True)
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            if data is None:
+                display_data_source("predict_model", "Test set (held out).")
+            else:
+                display_data_source("predict_model", "New data provided by user.")
         logger.info(
             "predict_model() called with data=%s",
             "custom" if data is not None else "test_set",
@@ -1376,6 +1456,12 @@ class ClassificationExperiment:
         >>> exp.save_model(final_model, "production_model")
         """
         self._check_setup()
+        from pycaret_redux.utils.display import display_data_source
+
+        display_data_source(
+            "finalize_model",
+            "Retraining on full dataset (train + test combined).",
+        )
         logger.info("finalize_model() called with estimator=%s", type(estimator).__name__)
         from pycaret_redux.training.finalization import finalize_model as _finalize
 
@@ -1652,6 +1738,13 @@ class ClassificationExperiment:
         'High variance (overfitting)'
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "diagnose_bias_variance",
+                "Training set with internal CV for learning curves.",
+            )
         import numpy as np
         from sklearn.model_selection import learning_curve
 
@@ -1770,6 +1863,13 @@ class ClassificationExperiment:
         >>> scores = exp.nested_cv("lr", param_grid={"C": [0.01, 0.1, 1, 10]})
         """
         self._check_setup()
+        if verbose:
+            from pycaret_redux.utils.display import display_data_source
+
+            display_data_source(
+                "nested_cv",
+                "Training set only. Inner CV tunes, outer CV evaluates. Unbiased.",
+            )
         from pycaret_redux.models.factory import create_estimator
         from pycaret_redux.training.cross_validation import run_nested_cross_validation
 

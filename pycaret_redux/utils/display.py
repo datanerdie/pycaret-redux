@@ -22,6 +22,31 @@ def _in_notebook() -> bool:
         return False
 
 
+def display_data_source(method_name: str, data_used: str) -> None:
+    """Print a short data source banner before method output.
+
+    Parameters
+    ----------
+    method_name : str
+        Name of the method (e.g. "compare_models").
+    data_used : str
+        Description of which data is used.
+    """
+    if _in_notebook():
+        from IPython.display import HTML, display
+
+        display(
+            HTML(
+                f'<div style="background-color:#e8f4f8; color:#1a5276; '
+                f"padding:4px 10px; border-left:3px solid #2980b9; "
+                f'font-size:12px; margin-bottom:6px; font-family:monospace;">'
+                f"<b>{method_name}</b> &mdash; {data_used}</div>"
+            )
+        )
+    else:
+        print(f"[{method_name}] {data_used}")
+
+
 # Theme-agnostic color styles: each pairs a background with an explicit
 # text color so the output is readable on both light and dark backgrounds.
 _STYLES = {
