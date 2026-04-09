@@ -2036,7 +2036,7 @@ class ClassificationExperiment:
         if verbose:
             print("Step 1/3: Comparing models...")
         top_models = self.compare_models(
-            sort=optimize, n_select=n_top, turbo=turbo, verbose=verbose
+            sort=optimize, n_select=n_top, turbo=turbo, errors="ignore", verbose=verbose
         )
         if not isinstance(top_models, list):
             top_models = [top_models]

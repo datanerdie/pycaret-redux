@@ -220,9 +220,11 @@ def get_default_classifiers(seed: int, n_jobs: int | None = -1) -> list[ModelEnt
             id="qda",
             name="Quadratic Discriminant Analysis",
             class_def=QuadraticDiscriminantAnalysis,
+            default_args={"reg_param": 0.01},  # prevent singular covariance
             tuning=TuningSpace(
                 grid={"reg_param": _arange(0.0, 1.0, 0.1)},
             ),
+            is_turbo=False,  # fragile with scaled/correlated data
             shap_type=None,
         ),
         # AdaBoost
