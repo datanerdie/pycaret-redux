@@ -49,6 +49,7 @@ class SetupConfig:
     encoding_method: Any = None
     rare_to_value: float | None = None
     rare_value: str = "rare"
+    drop_first_ohe: bool = False
 
     # Feature engineering
     polynomial_features: bool = False

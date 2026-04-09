@@ -123,6 +123,7 @@ def build_preprocessing_pipeline(
                 build_categorical_encoder(
                     max_encoding_ohe=setup_cfg.max_encoding_ohe,
                     encoding_method=setup_cfg.encoding_method,
+                    drop_first=setup_cfg.drop_first_ohe,
                 ),
             )
         )

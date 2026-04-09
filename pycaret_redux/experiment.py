@@ -113,6 +113,7 @@ class ClassificationExperiment:
         encoding_method: Any = None,
         rare_to_value: float | None = None,
         rare_value: str = "rare",
+        drop_first_ohe: bool = False,
         polynomial_features: bool = False,
         polynomial_degree: int = 2,
         low_variance_threshold: float | None = None,
@@ -365,6 +366,7 @@ class ClassificationExperiment:
             encoding_method=encoding_method,
             rare_to_value=rare_to_value,
             rare_value=rare_value,
+            drop_first_ohe=drop_first_ohe,
             polynomial_features=polynomial_features,
             polynomial_degree=polynomial_degree,
             low_variance_threshold=low_variance_threshold,
@@ -1879,8 +1881,9 @@ class ClassificationExperiment:
         metric : str
             Metric to compare on. Default "Accuracy".
         test : str
-            "wilcoxon" (non-parametric), "ttest" (paired t-test), or
-            "mcnemar" (McNemar's test on prediction disagreements).
+            "wilcoxon" (non-parametric), "ttest" (paired t-test),
+            "mcnemar" (McNemar's test on prediction disagreements), or
+            "delong" (DeLong test comparing AUC curves).
         fold : int or CV splitter, optional
             Override fold configuration. Not used for McNemar's test.
         verbose : bool
@@ -1899,7 +1902,31 @@ class ClassificationExperiment:
         """
         self._check_setup()
 
-        if test == "mcnemar":
+        if test == "delong":
+            from pycaret_redux.training.stats import delong_test
+
+            X_test = self._config.X_test
+            y_test = self._config.y_test
+            if self._config.pipeline is not None:
+                X_test = self._config.pipeline.transform(X_test)
+
+            # Get positive-class probabilities
+            def _get_proba(est):
+                if hasattr(est, "predict_proba"):
+                    p = est.predict_proba(X_test)
+                    return p[:, 1] if p.ndim == 2 else p
+                elif hasattr(est, "decision_function"):
+                    return est.decision_function(X_test)
+                raise ValueError(f"{type(est).__name__} has no probability output.")
+
+            result = delong_test(
+                y_true=y_test.values,
+                proba_a=_get_proba(model_a),
+                proba_b=_get_proba(model_b),
+                model_a_name=type(model_a).__name__,
+                model_b_name=type(model_b).__name__,
+            )
+        elif test == "mcnemar":
             from pycaret_redux.training.stats import mcnemar_test
 
             X_test = self._config.X_test
@@ -1962,6 +1989,9 @@ class ClassificationExperiment:
             if "model_a_mean" in result:
                 print(f"  {result['model_a']:30s} mean: {result['model_a_mean']}")
                 print(f"  {result['model_b']:30s} mean: {result['model_b_mean']}")
+            if "auc_a" in result:
+                print(f"  {result['model_a']:30s} AUC: {result['auc_a']}")
+                print(f"  {result['model_b']:30s} AUC: {result['auc_b']}")
             if "b_count" in result:
                 print(f"  A correct & B wrong: {result['b_count']}")
                 print(f"  A wrong & B correct: {result['c_count']}")

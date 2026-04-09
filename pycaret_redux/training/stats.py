@@ -364,3 +364,127 @@ def five_by_two_cv_f_test(
         "model_b": type(estimator_b).__name__,
         "conclusion": conclusion,
     }
+
+
+def delong_test(
+    y_true: np.ndarray,
+    proba_a: np.ndarray,
+    proba_b: np.ndarray,
+    model_a_name: str = "Model A",
+    model_b_name: str = "Model B",
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """DeLong test for comparing AUC of two classifiers.
+
+    Tests whether two ROC AUC scores are significantly different using
+    the non-parametric method of DeLong et al. (1988).
+
+    Parameters
+    ----------
+    y_true : array-like
+        True binary labels.
+    proba_a : array-like
+        Predicted probabilities from model A (positive class).
+    proba_b : array-like
+        Predicted probabilities from model B (positive class).
+    model_a_name : str
+        Display name for model A.
+    model_b_name : str
+        Display name for model B.
+    alpha : float
+        Significance level.
+
+    Returns
+    -------
+    dict with keys: test, auc_a, auc_b, z_statistic, p_value,
+    significant, conclusion.
+    """
+    y = np.asarray(y_true)
+    pa = np.asarray(proba_a)
+    pb = np.asarray(proba_b)
+
+    # Separate positive and negative samples
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    m = len(pos_idx)
+    n = len(neg_idx)
+
+    if m == 0 or n == 0:
+        return {
+            "test": "DeLong test",
+            "auc_a": 0.0,
+            "auc_b": 0.0,
+            "z_statistic": 0.0,
+            "p_value": 1.0,
+            "alpha": alpha,
+            "significant": False,
+            "model_a": model_a_name,
+            "model_b": model_b_name,
+            "conclusion": "Cannot compute — need both positive and negative samples.",
+        }
+
+    # Compute structural components (placement values)
+    def _compute_placements(proba):
+        """Compute V10 (for positives) and V01 (for negatives)."""
+        pos_scores = proba[pos_idx]
+        neg_scores = proba[neg_idx]
+        # V10[i] = fraction of negatives scored below positive i
+        v10 = np.array(
+            [np.mean(neg_scores < ps) + 0.5 * np.mean(neg_scores == ps) for ps in pos_scores]
+        )
+        # V01[j] = fraction of positives scored above negative j
+        v01 = np.array(
+            [np.mean(pos_scores > ns) + 0.5 * np.mean(pos_scores == ns) for ns in neg_scores]
+        )
+        return v10, v01
+
+    v10_a, v01_a = _compute_placements(pa)
+    v10_b, v01_b = _compute_placements(pb)
+
+    auc_a = float(np.mean(v10_a))
+    auc_b = float(np.mean(v10_b))
+
+    # Covariance matrix of the two AUCs
+    s10 = np.cov(np.column_stack([v10_a, v10_b]), rowvar=False) / m
+    s01 = np.cov(np.column_stack([v01_a, v01_b]), rowvar=False) / n
+    s = s10 + s01
+
+    # Variance of the difference
+    var_diff = s[0, 0] + s[1, 1] - 2 * s[0, 1]
+
+    if var_diff <= 0:
+        return {
+            "test": "DeLong test",
+            "auc_a": round(auc_a, 4),
+            "auc_b": round(auc_b, 4),
+            "z_statistic": 0.0,
+            "p_value": 1.0,
+            "alpha": alpha,
+            "significant": False,
+            "model_a": model_a_name,
+            "model_b": model_b_name,
+            "conclusion": "AUCs are identical.",
+        }
+
+    z = (auc_a - auc_b) / np.sqrt(var_diff)
+    p_value = float(2 * stats.norm.sf(abs(z)))  # two-sided
+    significant = p_value < alpha
+
+    if significant:
+        better = model_a_name if auc_a > auc_b else model_b_name
+        conclusion = f"{better} has significantly higher AUC (p={p_value:.4f})"
+    else:
+        conclusion = f"No significant difference in AUC (p={p_value:.4f})"
+
+    return {
+        "test": "DeLong test",
+        "auc_a": round(auc_a, 4),
+        "auc_b": round(auc_b, 4),
+        "z_statistic": round(float(z), 4),
+        "p_value": round(p_value, 4),
+        "alpha": alpha,
+        "significant": significant,
+        "model_a": model_a_name,
+        "model_b": model_b_name,
+        "conclusion": conclusion,
+    }
