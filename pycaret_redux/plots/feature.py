@@ -25,15 +25,20 @@ def _enrich_feature_names(
 
     enriched = []
     for name in feature_names:
-        # Check if it's an OHE-expanded name like "feature_value"
         found = False
         for base_feat, label_map in feature_labels.items():
+            is_binary = len(label_map) <= 2
+
             if name.startswith(f"{base_feat}_"):
+                # OHE-expanded name like "marital_status_2"
                 suffix = name[len(base_feat) + 1 :]
-                # Try to map the suffix to a label
                 for code, label in label_map.items():
                     if str(code) == suffix or label == suffix:
-                        enriched.append(f"{base_feat}: {label}")
+                        if is_binary:
+                            # Binary: just use the feature name
+                            enriched.append(base_feat)
+                        else:
+                            enriched.append(f"{base_feat}: {label}")
                         found = True
                         break
                 if not found:
@@ -41,9 +46,13 @@ def _enrich_feature_names(
                     found = True
                 break
             elif name == base_feat:
-                # Exact match — show the feature with its label description
-                desc = ", ".join(f"{k}={v}" for k, v in label_map.items())
-                enriched.append(f"{name} ({desc})")
+                # Exact match (e.g. ordinal-encoded binary feature)
+                # Binary: just the feature name. Multi: show mapping.
+                if is_binary:
+                    enriched.append(name)
+                else:
+                    desc = ", ".join(f"{k}={v}" for k, v in label_map.items())
+                    enriched.append(f"{name} ({desc})")
                 found = True
                 break
         if not found:

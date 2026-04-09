@@ -81,6 +81,16 @@ def tune_model(
             print("No tuning grid available for this model. Returning as-is.")
         return estimator, None
 
+    # Adapt search space to dataset characteristics (unless custom grid provided)
+    if custom_grid is None:
+        from pycaret_redux.models.tuning import adapt_search_space
+
+        est_id = _get_estimator_id(estimator, model_registry)
+        n_samples = len(config.X_train)
+        n_features = config.X_train.shape[1]
+        n_classes = config.y_train.nunique()
+        param_grid = adapt_search_space(param_grid, est_id, n_samples, n_features, n_classes)
+
     # Resolve scoring metric
     optimize_id = _resolve_optimize_metric(optimize, metric_registry)
     scorer = build_sklearn_scorer(metric_registry.get(optimize_id))
@@ -160,8 +170,17 @@ def _get_tuning_grid(estimator: Any, registry: ModelRegistry) -> dict[str, list]
     est_type = type(estimator)
     for entry in registry._models.values():
         if entry.class_def is est_type:
-            return entry.tuning.grid
+            return dict(entry.tuning.grid)  # copy to avoid mutating registry
     return {}
+
+
+def _get_estimator_id(estimator: Any, registry: ModelRegistry) -> str:
+    """Get the model registry ID for an estimator."""
+    est_type = type(estimator)
+    for entry in registry._models.values():
+        if entry.class_def is est_type:
+            return entry.id
+    return "unknown"
 
 
 def _resolve_optimize_metric(optimize: str, registry: MetricRegistry) -> str:
