@@ -125,6 +125,13 @@ class ExperimentConfig:
     feature_types: dict[str, list[str]] = field(default_factory=dict)
     is_multiclass: bool = False
 
+    # Feature labels: maps feature_name -> {code: label} for display in plots
+    # e.g. {"smoking": {0: "No", 1: "Yes"}, "marital": {1: "Married", 2: "Single"}}
+    feature_labels: dict[str, dict] = field(default_factory=dict)
+    # Target labels: maps target code -> label
+    # e.g. {0: "Benign", 1: "Malignant"}
+    target_labels: dict = field(default_factory=dict)
+
     # Pipeline (preprocessing only, no estimator)
     pipeline: Pipeline | None = None
 

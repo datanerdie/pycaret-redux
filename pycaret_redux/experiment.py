@@ -151,6 +151,8 @@ class ClassificationExperiment:
         session_id: int | None = None,
         verbose: bool = True,
         profile: bool = False,
+        feature_labels: dict[str, dict] | None = None,
+        target_labels: dict | None = None,
     ) -> Self:
         """Initialize the experiment: validate data, preprocess, and split train/test.
 
@@ -327,6 +329,8 @@ class ClassificationExperiment:
 
         # Detect multiclass
         self._config.is_multiclass = y.nunique() > 2
+        self._config.feature_labels = feature_labels or {}
+        self._config.target_labels = target_labels or {}
         logger.info(
             "Target '%s' has %d classes (multiclass=%s)",
             target_name,
@@ -1022,6 +1026,12 @@ class ClassificationExperiment:
             y = self._config.y_test
             if self._config.pipeline is not None:
                 X = self._config.pipeline.transform(X)
+
+        # Pass labels to plots for readable axis labels
+        if self._config.feature_labels:
+            kwargs.setdefault("feature_labels", self._config.feature_labels)
+        if self._config.target_labels:
+            kwargs.setdefault("target_labels", self._config.target_labels)
 
         return registry.render(
             plot_id=plot,

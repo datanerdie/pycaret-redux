@@ -8,9 +8,53 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def _enrich_feature_names(
+    feature_names: list[str],
+    feature_labels: dict[str, dict] | None = None,
+) -> list[str]:
+    """Enrich feature names with human-readable labels.
+
+    For OHE features like 'gender_F', looks up the base feature 'gender'
+    in feature_labels and produces 'gender: F'.
+
+    For features with value mappings like {0: "No", 1: "Yes"},
+    the labels are available for plots that show feature values.
+    """
+    if not feature_labels:
+        return feature_names
+
+    enriched = []
+    for name in feature_names:
+        # Check if it's an OHE-expanded name like "feature_value"
+        found = False
+        for base_feat, label_map in feature_labels.items():
+            if name.startswith(f"{base_feat}_"):
+                suffix = name[len(base_feat) + 1 :]
+                # Try to map the suffix to a label
+                for code, label in label_map.items():
+                    if str(code) == suffix or label == suffix:
+                        enriched.append(f"{base_feat}: {label}")
+                        found = True
+                        break
+                if not found:
+                    enriched.append(f"{base_feat}: {suffix}")
+                    found = True
+                break
+            elif name == base_feat:
+                # Exact match — show the feature with its label description
+                desc = ", ".join(f"{k}={v}" for k, v in label_map.items())
+                enriched.append(f"{name} ({desc})")
+                found = True
+                break
+        if not found:
+            enriched.append(name)
+    return enriched
+
+
 def plot_feature_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figure:
     """Plot feature importance (from model or permutation-based)."""
     n_features = kwargs.get("n_features", 20)
+    feature_labels = kwargs.get("feature_labels")
 
     # Try to get feature importance from model
     importances = None
@@ -24,11 +68,9 @@ def plot_feature_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Fig
     elif hasattr(estimator, "coef_"):
         importances = np.abs(estimator.coef_).flatten()
         if len(importances) != X.shape[1]:
-            # Multiclass: average across classes
             importances = np.abs(estimator.coef_).mean(axis=0)
 
     if importances is None:
-        # Fallback to permutation importance
         from sklearn.inspection import permutation_importance
 
         result = permutation_importance(estimator, X, y, n_repeats=5, random_state=0, n_jobs=-1)
@@ -37,9 +79,12 @@ def plot_feature_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Fig
     if feature_names is None:
         feature_names = [f"Feature {i}" for i in range(len(importances))]
 
+    # Enrich names with labels
+    display_names = _enrich_feature_names(feature_names, feature_labels)
+
     # Sort and take top N
     indices = np.argsort(importances)[::-1][:n_features]
-    top_names = [feature_names[i] for i in indices]
+    top_names = [display_names[i] for i in indices]
     top_importances = importances[indices]
 
     fig, ax = plt.subplots(figsize=(10, max(4, n_features * 0.3)))
@@ -63,6 +108,7 @@ def plot_permutation_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt
     n_features = kwargs.get("n_features", 20)
     n_repeats = kwargs.get("n_repeats", 10)
     scoring = kwargs.get("scoring", "accuracy")
+    feature_labels = kwargs.get("feature_labels")
 
     result = permutation_importance(
         estimator, X, y, n_repeats=n_repeats, random_state=0, n_jobs=-1, scoring=scoring
@@ -72,9 +118,12 @@ def plot_permutation_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt
         list(X.columns) if hasattr(X, "columns") else [f"F{i}" for i in range(X.shape[1])]
     )
 
+    # Enrich names with labels
+    display_names = _enrich_feature_names(feature_names, feature_labels)
+
     # Sort by mean importance
     indices = np.argsort(result.importances_mean)[::-1][:n_features]
-    top_names = [feature_names[i] for i in indices]
+    top_names = [display_names[i] for i in indices]
     top_means = result.importances_mean[indices]
     top_stds = result.importances_std[indices]
 
