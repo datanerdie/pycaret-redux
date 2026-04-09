@@ -14,10 +14,10 @@ uv sync
 
 # Optional extras
 uv add xgboost lightgbm catboost       # boosting models
-uv add imbalanced-learn                 # class imbalance handling
+uv add imbalanced-learn                 # class imbalance handling (SMOTE etc.)
 uv add shap                             # model interpretation
 uv add mlflow                           # experiment tracking
-uv add optuna                           # advanced hyperparameter tuning
+uv add optuna                           # Optuna hyperparameter tuning
 ```
 
 ## Quick Start
@@ -26,31 +26,42 @@ uv add optuna                           # advanced hyperparameter tuning
 from pycaret_redux import ClassificationExperiment
 from sklearn.datasets import load_breast_cancer
 
-# Load data
 data = load_breast_cancer(as_frame=True).frame
 
-# 1. Setup
 exp = ClassificationExperiment()
 exp.setup(data=data, target="target", session_id=42)
-
-# 2. Compare models
 best = exp.compare_models()
-
-# 3. Tune the best model
 tuned = exp.tune_model(best)
-
-# 4. Predict
 preds = exp.predict_model(tuned)
-
-# 5. Save for deployment
 exp.save_model(tuned, "my_model")
 ```
+
+Or use AutoML for a fully automated pipeline:
+
+```python
+best_model = exp.automl(optimize="Accuracy", n_top=3, ensemble="blend")
+```
+
+## Features at a Glance
+
+| Category | Methods |
+|----------|---------|
+| **Setup** | `setup()` with 35+ preprocessing options, `profile=True` for data profiling |
+| **Modeling** | `compare_models()`, `create_model()`, `tune_model()`, `automl()` |
+| **Ensembles** | `blend_models()`, `stack_models()`, `ensemble_model()` |
+| **Evaluation** | `evaluate_model()`, `predict_model()`, `pull()` |
+| **Plots** | `plot_model()` — 14 plot types |
+| **Calibration** | `calibrate_model()`, `optimize_threshold()` |
+| **Statistics** | `compare_model_stats()`, `compare_multiple_stats()`, `compare_5x2cv()` |
+| **Diagnostics** | `diagnose_bias_variance()`, `get_oob_score()`, `check_drift()` |
+| **Advanced CV** | `nested_cv()` + 6 fold strategies |
+| **Deployment** | `finalize_model()`, `save_model()`, `load_model()`, `predict_from_artifact()` |
+| **Inspection** | `models()`, `get_metrics()`, `get_config()`, `get_pipeline()` |
+| **Extensibility** | `add_metric()`, `remove_metric()`, custom estimators |
 
 ## Guide
 
 ### Setup & Data Profiling
-
-`setup()` initializes the experiment: validates data, splits train/test, builds the preprocessing pipeline, and registers available models and metrics.
 
 ```python
 exp = ClassificationExperiment()
@@ -63,9 +74,9 @@ exp.setup(
 
     # Preprocessing
     normalize=True,
-    normalize_method="zscore",       # zscore, minmax, maxabs, robust
+    normalize_method="zscore",         # zscore, minmax, maxabs, robust
     transformation=True,
-    transformation_method="yeo-johnson",
+    transformation_method="yeo-johnson",  # yeo-johnson, quantile, or "auto" (per-feature skew detection)
 
     # Feature engineering
     polynomial_features=True,
@@ -73,82 +84,79 @@ exp.setup(
     remove_multicollinearity=True,
     multicollinearity_threshold=0.9,
 
+    # Dimensionality reduction
+    pca=True,
+    pca_method="linear",               # linear, kernel, incremental, random, sparse_random, lda
+
+    # Feature selection
+    feature_selection=True,
+    feature_selection_method="classic", # classic (SelectKBest), sequential, rfe
+
     # Missing values
-    numeric_imputation="mean",       # mean, median, mode, knn
+    numeric_imputation="mean",         # mean, median, mode, knn
     categorical_imputation="mode",
 
     # Outliers
     remove_outliers=True,
     outliers_threshold=0.05,
 
-    # Imbalance
-    fix_imbalance=True,              # requires: uv add imbalanced-learn
-    fix_imbalance_method="SMOTE",
+    # Imbalance handling
+    fix_imbalance=True,
+    fix_imbalance_method="SMOTE",      # SMOTE, ADASYN, RandomOverSampler, or "class_weight"
 
-    # Profile the data
-    profile=True,                    # shows class distribution, missing values, correlations
+    # Data profiling
+    profile=True,                      # shows class distribution, missing values, correlations, warnings
 )
 ```
 
-Use `profile=True` to see a summary of your data: target distribution, missing values, numeric statistics, categorical cardinality, top correlations, and class imbalance warnings.
-
 ### Comparing Models
-
-Train and rank all available models in one call:
 
 ```python
 best = exp.compare_models(sort="Accuracy", turbo=True)
-```
 
-The output is a styled table with yellow-highlighted best scores per metric, training time, and a progress bar.
+# Compare specific models (including HistGradientBoosting)
+best = exp.compare_models(include=["lr", "rf", "hgbc", "gbc", "et"])
 
-```python
-# Compare specific models only
-best = exp.compare_models(include=["lr", "rf", "dt", "knn", "gbc"])
-
-# Return top 3 models
+# Return top 3
 top3 = exp.compare_models(n_select=3)
 
-# Set a time budget (minutes)
+# Time budget (minutes)
 best = exp.compare_models(budget_time=2.0)
+
+# Pull the comparison table
+exp.pull()
 ```
 
 ### Creating & Tuning Models
 
 ```python
-# Train a specific model by ID
 lr = exp.create_model("lr")
 rf = exp.create_model("rf")
-dt = exp.create_model("dt", max_depth=5)  # pass extra params
+hgbc = exp.create_model("hgbc")     # HistGradientBoosting (fast, handles missing values)
+dt = exp.create_model("dt", max_depth=5)
 
-# Tune hyperparameters
-tuned_rf = exp.tune_model(rf, n_iter=50, optimize="F1")
+# Standard random search
+tuned = exp.tune_model(rf, n_iter=50, optimize="F1")
 
-# Use a custom search grid
-tuned_dt = exp.tune_model(dt, custom_grid={"max_depth": [3, 5, 7, 10, 15]})
+# HalvingRandomSearchCV (successive halving — much faster)
+tuned = exp.tune_model(rf, search_library="halving", optimize="Accuracy")
+
+# Custom grid
+tuned = exp.tune_model(dt, custom_grid={"max_depth": [3, 5, 7, 10]})
 ```
 
-Available model IDs: `lr`, `knn`, `nb`, `dt`, `svm`, `rbfsvm`, `gpc`, `mlp`, `ridge`, `rf`, `qda`, `ada`, `gbc`, `lda`, `et`, `dummy`, and optionally `xgboost`, `lightgbm`, `catboost`.
+Available models: `lr`, `knn`, `nb`, `dt`, `svm`, `rbfsvm`, `gpc`, `mlp`, `ridge`, `rf`, `qda`, `ada`, `gbc`, `hgbc`, `lda`, `et`, `dummy`, and optionally `xgboost`, `lightgbm`, `catboost`.
 
 ### Ensembles
 
 ```python
-# Soft voting (average probabilities)
-blended = exp.blend_models([lr, rf, dt])
-
-# Hard voting (majority rule)
-blended_hard = exp.blend_models([lr, rf, dt], method="hard")
-
-# Stacking with a meta-learner
-stacked = exp.stack_models([lr, rf, dt])
-
-# Bagging
-bagged = exp.ensemble_model(dt, n_estimators=20)
+blended = exp.blend_models([lr, rf, dt])                  # soft voting
+blended = exp.blend_models([lr, rf, dt], method="hard")   # hard voting
+stacked = exp.stack_models([lr, rf, dt])                  # stacking
+bagged = exp.ensemble_model(dt, n_estimators=20)          # bagging
 ```
 
 ### AutoML
-
-Run the full pipeline in one call — compare, tune, ensemble:
 
 ```python
 best_model = exp.automl(
@@ -159,7 +167,7 @@ best_model = exp.automl(
 )
 ```
 
-### Plotting
+### Plots (14 types)
 
 ```python
 exp.plot_model(model, plot="auc")              # ROC/AUC curve
@@ -167,6 +175,7 @@ exp.plot_model(model, plot="confusion_matrix") # Confusion matrix
 exp.plot_model(model, plot="pr")               # Precision-recall curve
 exp.plot_model(model, plot="threshold")        # Metrics vs threshold (binary)
 exp.plot_model(model, plot="feature")          # Feature importance
+exp.plot_model(model, plot="permutation")      # Permutation importance (model-agnostic)
 exp.plot_model(model, plot="class_report")     # Classification report heatmap
 exp.plot_model(model, plot="calibration")      # Calibration curve
 exp.plot_model(model, plot="learning")         # Learning curve
@@ -176,73 +185,90 @@ exp.plot_model(model, plot="gain")             # Gain chart (binary)
 exp.plot_model(model, plot="ks")               # KS statistic (binary)
 exp.plot_model(model, plot="error")            # Prediction error
 
-# Save a plot to file
-exp.plot_model(model, plot="auc", save="roc_curve.png")
+exp.plot_model(model, plot="auc", save="roc.png")  # save to file
 ```
 
 ### Evaluation & Predictions
 
 ```python
-# Evaluate on test set
 exp.evaluate_model(model)
-
-# Predict on test set
 preds = exp.predict_model(model)
-
-# Predict on new data
 preds = exp.predict_model(model, data=new_df)
-
-# Predict with raw probability scores
 preds = exp.predict_model(model, raw_score=True)
-
-# Custom probability threshold (binary only)
 preds = exp.predict_model(model, probability_threshold=0.7)
 ```
 
-### Probability Calibration & Threshold Optimization
+### Calibration & Threshold Optimization
 
 ```python
-# Calibrate predicted probabilities
 calibrated = exp.calibrate_model(model, method="sigmoid")  # or "isotonic"
-
-# Find optimal decision threshold
 model, threshold = exp.optimize_threshold(model, optimize="F1")
-preds = exp.predict_model(model, probability_threshold=threshold)
 ```
 
 ### Statistical Model Comparison
 
-Test whether one model is *significantly* better than another:
+Five statistical tests for rigorous model comparison:
 
 ```python
-result = exp.compare_model_stats(lr, rf, metric="Accuracy", test="wilcoxon")
-# Prints: p-value, conclusion ("Model A is significantly better" or "No significant difference")
+# McNemar's test (pairwise, on prediction disagreements)
+exp.compare_model_stats(lr, rf, test="mcnemar")
+
+# Wilcoxon signed-rank test (pairwise, on CV fold scores)
+exp.compare_model_stats(lr, rf, metric="Accuracy", test="wilcoxon")
+
+# Paired t-test (pairwise, on CV fold scores)
+exp.compare_model_stats(lr, rf, test="ttest")
+
+# Cochran's Q test (3+ classifiers, omnibus test)
+exp.compare_multiple_stats([lr, rf, dt, hgbc])
+
+# 5x2cv paired F-test (Dietterich's method — most powerful pairwise test)
+exp.compare_5x2cv(lr, rf)
+```
+
+### Nested Cross-Validation
+
+Unbiased evaluation: inner loop tunes, outer loop evaluates.
+
+```python
+scores = exp.nested_cv("rf", n_iter=20)
+scores = exp.nested_cv("lr", param_grid={"C": [0.01, 0.1, 1, 10]})
+```
+
+### Bias-Variance Diagnostic
+
+```python
+diag = exp.diagnose_bias_variance(model)
+# Prints: train/val scores, gap, diagnosis (high bias/high variance/good fit), suggestion
+```
+
+### OOB Evaluation
+
+Free validation for forest/bagging models:
+
+```python
+oob_score = exp.get_oob_score(rf)  # uses out-of-bag samples (~37% per tree)
 ```
 
 ### Data Drift Detection
 
-Check if new data has drifted from the training distribution:
-
 ```python
 drift_report = exp.check_drift(new_data)
-# Returns DataFrame: Feature, Type, Test, Statistic, P-Value, Drifted
+# Returns DataFrame: Feature, Type, Test (KS/Chi2), Statistic, P-Value, Drifted
 ```
-
-Uses KS test for numeric features and Chi-squared for categorical features.
 
 ### Finalize, Save & Load
 
 ```python
-# Retrain on full data (train + test) before deployment
 final_model = exp.finalize_model(model)
 
-# Save (bundles preprocessing pipeline + model in one file)
+# Save (bundles preprocessing pipeline + model in one .joblib file)
 exp.save_model(final_model, "production_model")
 
-# Load
+# Load (returns the estimator)
 loaded = exp.load_model("production_model")
 
-# For standalone deployment (no experiment needed)
+# Standalone deployment (no experiment needed)
 from pycaret_redux.persistence.serialization import load_model, predict_from_artifact
 artifact = load_model("production_model")
 predictions = predict_from_artifact(artifact, raw_data)
@@ -251,20 +277,12 @@ predictions = predict_from_artifact(artifact, raw_data)
 ### Inspecting State
 
 ```python
-# Get last CV or comparison results
-exp.pull()
-
-# Inspect any config variable
-exp.get_config("seed")
-exp.get_config("X_train")
-exp.get_config("feature_types")
-
-# Get the preprocessing pipeline
-pipeline = exp.get_pipeline()
-
-# List available models and metrics
-exp.models()
-exp.get_metrics()
+exp.pull()                          # last CV or comparison result
+exp.get_config("seed")              # any config variable
+exp.get_config("X_train")           # training data
+exp.get_pipeline()                  # preprocessing pipeline
+exp.models()                        # available models
+exp.get_metrics()                   # available metrics
 ```
 
 ### Custom Metrics
@@ -273,49 +291,44 @@ exp.get_metrics()
 from sklearn.metrics import balanced_accuracy_score
 
 exp.add_metric(id="bal_acc", name="Balanced Accuracy", score_func=balanced_accuracy_score)
-
-# Now used in compare_models, create_model, etc.
-exp.create_model("rf")
-
+exp.create_model("rf")  # now includes Balanced Accuracy in CV results
 exp.remove_metric("bal_acc")
 ```
 
 ### Cross-Validation Strategies
 
 ```python
-exp.setup(data=df, target="target", fold_strategy="stratifiedkfold", fold=10)  # default
-exp.setup(data=df, target="target", fold_strategy="kfold", fold=5)
-exp.setup(data=df, target="target", fold_strategy="groupkfold", fold=5)
-exp.setup(data=df, target="target", fold_strategy="timeseries", fold=5)
-exp.setup(data=df, target="target", fold_strategy="repeatedstratifiedkfold", fold=5)
-exp.setup(data=df, target="target", fold_strategy="repeatedkfold", fold=5)
+exp.setup(data=df, target="target", fold_strategy="stratifiedkfold")        # default
+exp.setup(data=df, target="target", fold_strategy="kfold")
+exp.setup(data=df, target="target", fold_strategy="groupkfold")
+exp.setup(data=df, target="target", fold_strategy="timeseries")
+exp.setup(data=df, target="target", fold_strategy="repeatedstratifiedkfold")
+exp.setup(data=df, target="target", fold_strategy="repeatedkfold")
 
-# Or pass any sklearn CV splitter
+# Or any sklearn CV splitter
 from sklearn.model_selection import LeaveOneOut
 exp.setup(data=df, target="target", fold_strategy=LeaveOneOut())
 ```
 
 ### Logging
 
-PyCaret Redux uses Python's standard `logging` module. Enable it to see what's happening under the hood:
-
 ```python
 import logging
 logging.basicConfig(level=logging.INFO)
-
-# Now all setup, training, tuning, and persistence steps are logged
-exp.setup(data=df, target="target")
+exp.setup(data=df, target="target")  # all steps now logged
 ```
 
 ## What Changed from Original PyCaret
 
 | | Original PyCaret | PyCaret Redux |
 |---|---|---|
-| Architecture | 5-level inheritance, 220K-line monoliths | Single class, composition, ~3,500 lines |
+| Architecture | 5-level inheritance, 220K-line monoliths | Single class, composition |
 | Pipeline | imblearn Pipeline | sklearn Pipeline + ColumnTransformer |
 | Model registry | 23 container classes | Data-driven `ModelEntry` dataclasses |
 | API | Functional + OOP | OOP only (no global state) |
 | Deployment | Save model only | Bundles pipeline + model in one file |
+| Statistical tests | None | 5 tests (McNemar, Wilcoxon, t-test, Cochran's Q, 5x2cv F) |
+| Diagnostics | None | Bias-variance, OOB, drift detection, nested CV |
 | Python | 3.8+ | 3.12+ |
 | Dependencies | numpy<1.27, pandas<2.2, sklearn<1.5 | numpy 2.x, pandas 2.x, sklearn 1.6+ |
 
@@ -325,7 +338,7 @@ exp.setup(data=df, target="target")
 uv sync
 uv add --dev pytest ruff mypy
 
-# Run tests (97 passing)
+# Run tests (107 passing)
 uv run pytest
 
 # Lint & format
