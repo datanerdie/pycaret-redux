@@ -173,3 +173,186 @@ def mcnemar_test(
         "c_count": int(c),
         "conclusion": conclusion,
     }
+
+
+def cochrans_q_test(
+    y_true: np.ndarray,
+    predictions_list: list[np.ndarray],
+    model_names: list[str] | None = None,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """Cochran's Q test for comparing 3+ classifiers.
+
+    Tests null hypothesis: all classifiers have the same error rate.
+    Extends McNemar's test to multiple classifiers.
+
+    Parameters
+    ----------
+    y_true : array-like
+        True labels.
+    predictions_list : list of array-like
+        Predictions from each classifier.
+    model_names : list of str, optional
+        Display names for the models.
+    alpha : float
+        Significance level.
+
+    Returns
+    -------
+    dict with test results.
+    """
+    y_true = np.asarray(y_true)
+    k = len(predictions_list)
+
+    if k < 3:
+        raise ValueError("Cochran's Q requires at least 3 classifiers.")
+
+    if model_names is None:
+        model_names = [f"Model_{i}" for i in range(k)]
+
+    # Build correctness matrix: (n_samples, k_classifiers)
+    correct = np.column_stack([np.asarray(p) == y_true for p in predictions_list])
+
+    # Row sums and column sums
+    row_sums = correct.sum(axis=1)  # L_i
+    col_sums = correct.sum(axis=0)  # G_j
+
+    T = float(correct.sum())
+
+    numerator = (k - 1) * (k * float((col_sums**2).sum()) - T**2)
+    denominator = k * T - float((row_sums**2).sum())
+
+    if denominator == 0:
+        return {
+            "test": "Cochran's Q test",
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "alpha": alpha,
+            "significant": False,
+            "k_classifiers": k,
+            "model_names": model_names,
+            "conclusion": "All classifiers perform identically.",
+        }
+
+    q_stat = numerator / denominator
+    p_value = float(1 - stats.chi2.cdf(q_stat, df=k - 1))
+    significant = p_value < alpha
+
+    conclusion = (
+        f"Significant difference among {k} classifiers (p={p_value:.4f})"
+        if significant
+        else f"No significant difference among {k} classifiers (p={p_value:.4f})"
+    )
+
+    return {
+        "test": "Cochran's Q test",
+        "statistic": round(float(q_stat), 4),
+        "p_value": round(p_value, 4),
+        "alpha": alpha,
+        "significant": significant,
+        "k_classifiers": k,
+        "model_names": model_names,
+        "conclusion": conclusion,
+    }
+
+
+def five_by_two_cv_f_test(
+    estimator_a: Any,
+    estimator_b: Any,
+    X: np.ndarray,
+    y: np.ndarray,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """Dietterich's 5x2cv paired F-test.
+
+    More powerful than paired t-test with lower false positive rate.
+    Repeats 50/50 split 5 times and computes F-statistic.
+
+    Based on: Dietterich (1998), Alpaydin (1999), Raschka (2018).
+
+    Parameters
+    ----------
+    estimator_a : estimator
+        First classifier (unfitted, will be cloned).
+    estimator_b : estimator
+        Second classifier (unfitted, will be cloned).
+    X : array-like
+        Feature matrix.
+    y : array-like
+        Target vector.
+    seed : int
+        Random state.
+    alpha : float
+        Significance level.
+
+    Returns
+    -------
+    dict with test results.
+    """
+    from sklearn.base import clone
+    from sklearn.model_selection import StratifiedShuffleSplit
+
+    X = np.asarray(X)
+    y = np.asarray(y)
+
+    diffs = np.zeros((5, 2))
+    variances = np.zeros(5)
+
+    for i in range(5):
+        splitter = StratifiedShuffleSplit(n_splits=1, test_size=0.5, random_state=seed + i)
+        for fold_idx, (idx1, idx2) in enumerate(splitter.split(X, y)):
+            X1, X2 = X[idx1], X[idx2]
+            y1, y2 = y[idx1], y[idx2]
+
+            # Train A on set1, test on set2
+            a1 = clone(estimator_a).fit(X1, y1)
+            b1 = clone(estimator_b).fit(X1, y1)
+            score_a1 = float(np.mean(a1.predict(X2) == y2))
+            score_b1 = float(np.mean(b1.predict(X2) == y2))
+            diffs[i, 0] = score_a1 - score_b1
+
+            # Train A on set2, test on set1
+            a2 = clone(estimator_a).fit(X2, y2)
+            b2 = clone(estimator_b).fit(X2, y2)
+            score_a2 = float(np.mean(a2.predict(X1) == y1))
+            score_b2 = float(np.mean(b2.predict(X1) == y1))
+            diffs[i, 1] = score_a2 - score_b2
+
+        variances[i] = np.var([diffs[i, 0], diffs[i, 1]], ddof=0)
+
+    sum_sq = float(np.sum(diffs**2))
+    sum_var = float(np.sum(variances))
+
+    if sum_var == 0:
+        return {
+            "test": "5x2cv paired F-test",
+            "statistic": 0.0,
+            "p_value": 1.0,
+            "alpha": alpha,
+            "significant": False,
+            "model_a": type(estimator_a).__name__,
+            "model_b": type(estimator_b).__name__,
+            "conclusion": "No difference detected.",
+        }
+
+    f_stat = sum_sq / (2 * sum_var)
+    p_value = float(1 - stats.f.cdf(f_stat, dfn=10, dfd=5))
+    significant = p_value < alpha
+
+    conclusion = (
+        f"Significant difference (p={p_value:.4f})"
+        if significant
+        else f"No significant difference (p={p_value:.4f})"
+    )
+
+    return {
+        "test": "5x2cv paired F-test",
+        "statistic": round(float(f_stat), 4),
+        "p_value": round(p_value, 4),
+        "alpha": alpha,
+        "significant": significant,
+        "model_a": type(estimator_a).__name__,
+        "model_b": type(estimator_b).__name__,
+        "conclusion": conclusion,
+    }

@@ -86,6 +86,7 @@ def build_default_registry() -> PlotRegistry:
     )
     from pycaret_redux.plots.feature import (
         plot_feature_importance,
+        plot_permutation_importance,
     )
     from pycaret_redux.plots.gains import plot_gain_chart, plot_ks_statistic, plot_lift_chart
 
@@ -98,6 +99,7 @@ def build_default_registry() -> PlotRegistry:
         PlotEntry("error", "Prediction Error", plot_prediction_error),
         PlotEntry("class_report", "Class Report", plot_class_report),
         PlotEntry("feature", "Feature Importance", plot_feature_importance),
+        PlotEntry("permutation", "Permutation Importance", plot_permutation_importance),
         PlotEntry("learning", "Learning Curve", plot_learning_curve),
         PlotEntry("vc", "Validation Curve", plot_validation_curve),
         PlotEntry("calibration", "Calibration Curve", plot_calibration_curve, requires_proba=True),

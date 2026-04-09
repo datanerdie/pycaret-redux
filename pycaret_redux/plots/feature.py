@@ -50,3 +50,40 @@ def plot_feature_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Fig
     ax.set_title("Feature Importance")
     plt.tight_layout()
     return fig
+
+
+def plot_permutation_importance(estimator: Any, X: Any, y: Any, **kwargs) -> plt.Figure:
+    """Plot permutation importance (model-agnostic).
+
+    Randomly shuffles each feature and measures the drop in score.
+    More reliable than impurity-based importance for correlated features.
+    """
+    from sklearn.inspection import permutation_importance
+
+    n_features = kwargs.get("n_features", 20)
+    n_repeats = kwargs.get("n_repeats", 10)
+    scoring = kwargs.get("scoring", "accuracy")
+
+    result = permutation_importance(
+        estimator, X, y, n_repeats=n_repeats, random_state=0, n_jobs=-1, scoring=scoring
+    )
+
+    feature_names = (
+        list(X.columns) if hasattr(X, "columns") else [f"F{i}" for i in range(X.shape[1])]
+    )
+
+    # Sort by mean importance
+    indices = np.argsort(result.importances_mean)[::-1][:n_features]
+    top_names = [feature_names[i] for i in indices]
+    top_means = result.importances_mean[indices]
+    top_stds = result.importances_std[indices]
+
+    fig, ax = plt.subplots(figsize=(10, max(4, n_features * 0.3)))
+    y_pos = range(len(top_names))
+    ax.barh(y_pos, top_means[::-1], xerr=top_stds[::-1], color="steelblue", alpha=0.8)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(top_names[::-1])
+    ax.set_xlabel("Mean accuracy decrease")
+    ax.set_title("Permutation Importance")
+    plt.tight_layout()
+    return fig

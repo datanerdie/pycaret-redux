@@ -1499,6 +1499,146 @@ class ClassificationExperiment:
         self._metric_registry.remove(name_or_id)
 
     # ------------------------------------------------------------------
+    # OOB evaluation
+    # ------------------------------------------------------------------
+
+    def get_oob_score(self, estimator: Any) -> float | None:
+        """Get out-of-bag score for bagging/forest estimators.
+
+        OOB evaluation uses the ~37% of samples not seen by each tree,
+        providing a free validation estimate without a separate holdout set.
+
+        Parameters
+        ----------
+        estimator : estimator
+            A fitted estimator that supports ``oob_score`` (e.g. RandomForest,
+            BaggingClassifier, ExtraTreesClassifier).
+
+        Returns
+        -------
+        float or None
+            OOB accuracy, or None if the estimator doesn't support it.
+
+        Examples
+        --------
+        >>> rf = exp.create_model("rf")
+        >>> exp.get_oob_score(rf)
+        0.9523
+        """
+        self._check_setup()
+        if not hasattr(estimator, "oob_score_"):
+            # Try refitting with oob_score=True
+            from sklearn.base import clone
+
+            est = clone(estimator)
+            if hasattr(est, "oob_score"):
+                est.set_params(oob_score=True)
+                X_train = self._config.X_train
+                y_train = self._config.y_train
+                if self._config.pipeline is not None:
+                    X_train = self._config.pipeline.transform(X_train)
+                est.fit(X_train, y_train)
+                return round(float(est.oob_score_), 4)
+            return None
+        return round(float(estimator.oob_score_), 4)
+
+    # ------------------------------------------------------------------
+    # Bias-variance diagnostic
+    # ------------------------------------------------------------------
+
+    def diagnose_bias_variance(
+        self,
+        estimator: Any,
+        verbose: bool = True,
+    ) -> dict[str, Any]:
+        """Diagnose whether a model suffers from high bias or high variance.
+
+        Analyzes learning curves to determine if the model would benefit
+        from more data (high variance) or needs more capacity (high bias).
+
+        Parameters
+        ----------
+        estimator : estimator
+            Fitted model to diagnose.
+        verbose : bool
+            Print diagnosis.
+
+        Returns
+        -------
+        dict with keys: train_score, val_score, gap, diagnosis, suggestion.
+
+        Examples
+        --------
+        >>> diag = exp.diagnose_bias_variance(rf)
+        >>> diag["diagnosis"]
+        'High variance (overfitting)'
+        """
+        self._check_setup()
+        import numpy as np
+        from sklearn.model_selection import learning_curve
+
+        X_train = self._config.X_train
+        y_train = self._config.y_train
+        if self._config.pipeline is not None:
+            X_train = self._config.pipeline.transform(X_train)
+
+        train_sizes, train_scores, val_scores = learning_curve(
+            estimator,
+            X_train,
+            y_train,
+            cv=self._config.fold_generator,
+            n_jobs=-1,
+            train_sizes=np.linspace(0.1, 1.0, 5),
+            scoring="accuracy",
+        )
+
+        final_train = float(np.mean(train_scores[-1]))
+        final_val = float(np.mean(val_scores[-1]))
+        gap = final_train - final_val
+
+        # Diagnose
+        if final_val < 0.7 and gap < 0.05:
+            diagnosis = "High bias (underfitting)"
+            suggestion = "Try a more complex model, add features, or reduce regularization."
+        elif gap > 0.1:
+            diagnosis = "High variance (overfitting)"
+            suggestion = "Try regularization, feature selection, more data, or a simpler model."
+        elif final_val < 0.85 and gap > 0.05:
+            diagnosis = "Moderate bias-variance trade-off"
+            suggestion = "Consider tuning hyperparameters or ensembling."
+        else:
+            diagnosis = "Good fit"
+            suggestion = "Model appears well-balanced."
+
+        # Check if more data would help (is val score still rising?)
+        if len(val_scores) >= 3:
+            val_trend = np.mean(val_scores[-1]) - np.mean(val_scores[-3])
+            more_data_helps = val_trend > 0.01
+        else:
+            more_data_helps = False
+
+        result = {
+            "train_score": round(final_train, 4),
+            "val_score": round(final_val, 4),
+            "gap": round(gap, 4),
+            "diagnosis": diagnosis,
+            "suggestion": suggestion,
+            "more_data_helps": more_data_helps,
+        }
+
+        if verbose:
+            print(f"\nBias-Variance Diagnostic for {type(estimator).__name__}")
+            print(f"  Train score: {result['train_score']}")
+            print(f"  Val score:   {result['val_score']}")
+            print(f"  Gap:         {result['gap']}")
+            print(f"  Diagnosis:   {result['diagnosis']}")
+            print(f"  Suggestion:  {result['suggestion']}")
+            if more_data_helps:
+                print("  More data would likely improve performance.")
+
+        return result
+
+    # ------------------------------------------------------------------
     # Nested cross-validation
     # ------------------------------------------------------------------
 
@@ -1751,6 +1891,97 @@ class ClassificationExperiment:
                 print(f"  A wrong & B correct: {result['c_count']}")
             print(f"  p-value: {result['p_value']}")
             print(f"  Result:  {result['conclusion']}")
+
+        return result
+
+    def compare_multiple_stats(
+        self,
+        models: list[Any],
+        verbose: bool = True,
+    ) -> dict[str, Any]:
+        """Cochran's Q test: are 3+ classifiers significantly different?
+
+        Parameters
+        ----------
+        models : list of estimators
+            Three or more fitted models to compare.
+        verbose : bool
+            Print results.
+
+        Returns
+        -------
+        dict with Cochran's Q test results.
+        """
+        self._check_setup()
+        from pycaret_redux.training.stats import cochrans_q_test
+
+        X_test = self._config.X_test
+        y_test = self._config.y_test
+        if self._config.pipeline is not None:
+            X_test = self._config.pipeline.transform(X_test)
+
+        preds = [m.predict(X_test) for m in models]
+        names = [type(m).__name__ for m in models]
+
+        result = cochrans_q_test(y_test.values, preds, names)
+
+        if verbose:
+            print(f"\n{result['test']}")
+            print(f"  Classifiers: {', '.join(result['model_names'])}")
+            print(f"  Q statistic: {result['statistic']}")
+            print(f"  p-value: {result['p_value']}")
+            print(f"  Result: {result['conclusion']}")
+
+        return result
+
+    def compare_5x2cv(
+        self,
+        model_a: Any,
+        model_b: Any,
+        verbose: bool = True,
+    ) -> dict[str, Any]:
+        """Dietterich's 5x2cv paired F-test for model comparison.
+
+        More powerful than paired t-test with lower false positive rate.
+        Uses raw data (not preprocessed) to avoid data leakage.
+
+        Parameters
+        ----------
+        model_a : estimator
+            First classifier.
+        model_b : estimator
+            Second classifier.
+        verbose : bool
+            Print results.
+
+        Returns
+        -------
+        dict with F-test results.
+        """
+        self._check_setup()
+        from sklearn.base import clone
+
+        from pycaret_redux.training.cross_validation import _build_full_pipeline
+        from pycaret_redux.training.stats import five_by_two_cv_f_test
+
+        # Build full pipelines so preprocessing is included
+        pipe_a = _build_full_pipeline(self._config.pipeline, clone(model_a))
+        pipe_b = _build_full_pipeline(self._config.pipeline, clone(model_b))
+
+        X = self._config.X_train
+        y = self._config.y_train
+
+        result = five_by_two_cv_f_test(pipe_a, pipe_b, X.values, y.values, seed=self._config.seed)
+        # Fix model names to use original estimator names
+        result["model_a"] = type(model_a).__name__
+        result["model_b"] = type(model_b).__name__
+
+        if verbose:
+            print(f"\n{result['test']}")
+            print(f"  {result['model_a']} vs {result['model_b']}")
+            print(f"  F statistic: {result['statistic']}")
+            print(f"  p-value: {result['p_value']}")
+            print(f"  Result: {result['conclusion']}")
 
         return result
 

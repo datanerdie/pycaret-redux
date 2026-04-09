@@ -7,7 +7,9 @@ from typing import Any
 
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA, IncrementalPCA, KernelPCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.feature_selection import (
+    RFE,
     SelectFromModel,
     SelectKBest,
     SequentialFeatureSelector,
@@ -81,12 +83,17 @@ def build_preprocessing_pipeline(
         if setup_cfg.imputation_type == "simple":
             num_steps.append(("imputer", build_numeric_imputer(setup_cfg.numeric_imputation)))
         if setup_cfg.transformation:
-            num_steps.append(
-                (
-                    "power_transform",
-                    build_power_transformer(setup_cfg.transformation_method, config.seed),
+            if setup_cfg.transformation_method == "auto":
+                from pycaret_redux.preprocessing.skew import SkewTransformer
+
+                num_steps.append(("auto_skew_transform", SkewTransformer(threshold=1.0)))
+            else:
+                num_steps.append(
+                    (
+                        "power_transform",
+                        build_power_transformer(setup_cfg.transformation_method, config.seed),
+                    )
                 )
-            )
         if setup_cfg.normalize:
             num_steps.append(("normalizer", build_normalizer(setup_cfg.normalize_method)))
         if num_steps:
@@ -205,7 +212,15 @@ def build_preprocessing_pipeline(
     if not steps:
         steps.append(("passthrough", "passthrough"))
 
-    pipeline = Pipeline(steps)
+    # Enable pipeline memory caching for expensive transforms
+    memory = None
+    if hasattr(setup_cfg, "cache_pipeline") and setup_cfg.cache_pipeline:
+        import tempfile
+
+        memory = tempfile.mkdtemp()
+        logger.info("Pipeline caching enabled at: %s", memory)
+
+    pipeline = Pipeline(steps, memory=memory)
     # Output DataFrames (not numpy arrays) to preserve feature names
     pipeline.set_output(transform="pandas")
     logger.info(
@@ -216,12 +231,14 @@ def build_preprocessing_pipeline(
     return pipeline
 
 
-def _build_pca(setup_cfg: SetupConfig) -> PCA | KernelPCA | IncrementalPCA:
-    """Build a PCA transformer from setup config."""
+def _build_pca(setup_cfg: SetupConfig) -> Any:
+    """Build a dimensionality reduction transformer from setup config.
+
+    Supports PCA variants, random projections, and LDA.
+    """
     n_components = setup_cfg.pca_components
     if isinstance(n_components, str):
-        # e.g. "mle"
-        pass  # PCA handles string values
+        pass  # PCA handles string values like "mle"
     elif isinstance(n_components, float) and 0 < n_components < 1:
         pass  # PCA handles float as variance ratio
     elif n_components is None:
@@ -236,10 +253,25 @@ def _build_pca(setup_cfg: SetupConfig) -> PCA | KernelPCA | IncrementalPCA:
         case "incremental":
             n = n_components if isinstance(n_components, int) else None
             return IncrementalPCA(n_components=n)
+        case "random":
+            from sklearn.random_projection import GaussianRandomProjection
+
+            n = n_components if isinstance(n_components, int) else "auto"
+            return GaussianRandomProjection(n_components=n)
+        case "sparse_random":
+            from sklearn.random_projection import SparseRandomProjection
+
+            n = n_components if isinstance(n_components, int) else "auto"
+            return SparseRandomProjection(n_components=n)
+        case "lda":
+            # LDA as supervised dimensionality reduction
+            n = n_components if isinstance(n_components, int) else None
+            return LinearDiscriminantAnalysis(n_components=n)
         case _:
             raise ValueError(
                 f"Unknown pca_method: '{setup_cfg.pca_method}'. "
-                "Choose from: linear, kernel, incremental."
+                "Choose from: linear, kernel, incremental, random, "
+                "sparse_random, lda."
             )
 
 
@@ -262,8 +294,17 @@ def _build_feature_selector(
                 n_features_to_select=n_features,
                 direction="forward",
             )
+        case "rfe":
+            from sklearn.linear_model import LogisticRegression
+
+            est = setup_cfg.feature_selection_estimator
+            if isinstance(est, str):
+                est = LogisticRegression(max_iter=1000, random_state=seed)
+            n = n_features if isinstance(n_features, int) else None
+            return RFE(estimator=est, n_features_to_select=n, step=1)
         case _:
             raise ValueError(
-                f"Unknown feature_selection_method: '{setup_cfg.feature_selection_method}'. "
-                "Choose from: classic, sequential."
+                f"Unknown feature_selection_method: "
+                f"'{setup_cfg.feature_selection_method}'. "
+                "Choose from: classic, sequential, rfe."
             )
